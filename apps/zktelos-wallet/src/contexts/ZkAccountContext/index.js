@@ -117,7 +117,7 @@ export const ZkAccountContextProvider = ({children}) => {
         // Create all clients in parallel
         const clientPromises = poolAliases.map(async (alias) => {
           if (zkClients[alias]) return {alias, client: zkClients[alias]};
-          const client = await zp.createClient(alias, supportId, updateLoadingPercentage);
+          const client = await zp.createClient(alias, updateLoadingPercentage);
           return {alias, client};
         });
 
@@ -139,7 +139,7 @@ export const ZkAccountContextProvider = ({children}) => {
     createClients();
   }, [supportId, zkClients]);
 
-  const loadZkAccount = useCallback(async (secretKey, birthIndex, useDelegatedProver = false) => {
+  const loadZkAccount = useCallback(async (secretKey, birthIndex) => {
     setZkAccount(null);
     const poolAliases = Object.keys(zkClients);
     const allClientsReady = poolAliases.length > 0 && poolAliases.every(alias => zkClients[alias]);
@@ -159,7 +159,7 @@ export const ZkAccountContextProvider = ({children}) => {
       try {
         // Login to all zkClients in parallel with the same secretKey
         const loginPromises = poolAliases.map(async (alias) => {
-          await zp.createAccount(zkClients[alias], secretKey, birthIndex, useDelegatedProver);
+          await zp.createAccount(zkClients[alias], secretKey, birthIndex);
         });
         await Promise.all(loginPromises);
 
@@ -611,10 +611,9 @@ export const ZkAccountContextProvider = ({children}) => {
       if (currentPool.alias !== giftCard.poolAlias) {
         await switchToPool(giftCard.poolAlias);
       }
-      const proverExists = config.pools[giftCard.poolAlias].delegatedProverUrls.length > 0;
       const jobId = await zkClient.redeemGiftCard(
         giftCard,
-        proverExists ? ProverMode.DelegatedWithFallback : ProverMode.Local,
+        ProverMode.Local,
       );
       const txHash = await zkClient.waitJobTxHash(jobId);
       setGiftCardTxHash(txHash);
@@ -807,7 +806,7 @@ export const ZkAccountContextProvider = ({children}) => {
       const params = new URLSearchParams(window.location.search);
       const privateKey = params.get('code');
       const birthIndex = Number(params.get('index'));
-      loadZkAccount(privateKey, birthIndex, true);
+      loadZkAccount(privateKey, birthIndex);
     }
   }, [isDemo, loadZkAccount]);
 

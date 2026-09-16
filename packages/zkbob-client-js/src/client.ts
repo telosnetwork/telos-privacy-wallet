@@ -1746,7 +1746,7 @@ export class ZkBobClient extends ZkBobProvider {
       }
     }
 
-    const txProof = isDesktop() ? await proveTxNativeHardware(pub, sec) : await this.worker.proveTx(this.snarkParamsAlias(), pub, sec);
+    const txProof = isDesktop() ? await proveTxNativeHardware(pub, sec, this.snarkParamsAlias()) : await this.worker.proveTx(this.snarkParamsAlias(), pub, sec);
     const txValid = await this.worker.verifyTxProof(this.snarkParamsAlias(), txProof.inputs, txProof.proof);
 
     if (!txValid) {

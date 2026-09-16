@@ -288,8 +288,8 @@ export const initParamsRafael = async (
   }
 }
 
-export const proveTxNativeHardware = async (pub: any, sec: any) => {
-  return await (window as any).nativeProver.nativeProveTx([pub, sec])
+export const proveTxNativeHardware = async (pub: any, sec: any, paramsAlias: string) => {
+  return await (window as any).nativeProver.nativeProveTx([pub, sec, paramsAlias])
 }
 
 expose(obj);

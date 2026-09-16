@@ -4,7 +4,11 @@ const fs = require('fs')
 const zp = require('libzkbob-rs-node');
 
 let mainWindow;
-let proofParamsBuffer = null;
+const proofParamsCache = new Map();
+const proofParameterFiles = new Map([
+  ['prod', 'transfer_params_prod.bin'],
+  ['staging', 'transfer_params.bin'],
+]);
 
 // Configure logging based on platform and environment
 if (process.platform === 'win32' && app.isPackaged) {
@@ -83,12 +87,12 @@ function installSecurityHooks() {
 
   session.defaultSession.webRequest.onCompleted((d) => {
     if (d.resourceType === 'webSocket' && d.url.startsWith('wss://relay.walletconnect.com')) {
-      console.log('[WS completed]', {statusCode: d.statusCode, url: d.url});
+      console.log('[WS completed]', {statusCode: d.statusCode});
     }
   });
   session.defaultSession.webRequest.onErrorOccurred((d) => {
     if (d.resourceType === 'webSocket' && d.url.startsWith('wss://relay.walletconnect.com')) {
-      console.log('[WS errorOccurred]', {error: d.error, url: d.url});
+      console.log('[WS errorOccurred]', {error: d.error});
     }
   });
 }
@@ -157,19 +161,17 @@ function createWindow() {
   });
 }
 
-function loadProofParameters() {
-  try {
-    const binPath = join(__dirname, 'assets', 'transfer_params.bin');
-    console.log(`[Startup] Loading ZK proof parameters from: ${binPath}`);
-
-    const bin = fs.readFileSync(binPath);
-
-    proofParamsBuffer = zp.readParamsFromBinary(bin, false);
-
-    console.log('[Startup] ZK proof parameters successfully pre-loaded.');
-  } catch (error) {
-    console.error('[Startup Error] Failed to load ZK proof parameters:', error);
+function loadProofParameters(alias) {
+  // Resolve only bundled, known parameter sets; never accept a renderer path.
+  const filename = proofParameterFiles.get(alias);
+  if (!filename) {
+    throw new Error('Unsupported proof parameter set');
   }
+  if (!proofParamsCache.has(alias)) {
+    const bin = fs.readFileSync(join(__dirname, 'assets', filename));
+    proofParamsCache.set(alias, zp.readParamsFromBinary(bin, false));
+  }
+  return proofParamsCache.get(alias);
 }
 
 app.whenReady().then(async () => {
@@ -177,7 +179,6 @@ app.whenReady().then(async () => {
   installSecurityHooks();
   setupRustIpcHandler();
   createWindow();
-  loadProofParameters()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -195,9 +196,8 @@ app.on('web-contents-created', (_event, contents) => {
   });
 });
 
-app.on('certificate-error', (event, _webContents, _url, _error, _certificate, callback) => {
-  event.preventDefault();
-  callback(true);
+app.on('certificate-error', (_event, _webContents, _url, _error, _certificate, callback) => {
+  callback(false);
 });
 
 function setupRustIpcHandler() {
@@ -207,16 +207,15 @@ function setupRustIpcHandler() {
   // Handle synchronous request from the Renderer
   ipcMain.handle(channel, async (_, inputData) => {
     try {
-      console.log(`[IPC Main] Received request on ${channel} with data:`, inputData);
-
-      const params = proofParamsBuffer
+      const params = loadProofParameters(inputData[2])
       const result = await zp.proveTxAsync(params, inputData[0], inputData[1])
 
       return result
     } catch (error) {
-      console.error(`[IPC Main] Error running Rust task:`, error);
+      // Native errors can contain transaction inputs; never log or return them.
+      console.error('[IPC Main] Local proof generation failed');
       // Return an error object
-      return {success: false, error: error.message};
+      return {success: false, error: 'Unable to generate proof locally.'};
     }
   });
 }

@@ -1,9 +1,6 @@
 import React, { useContext } from 'react';
 import { HashRouter, Switch, Route, Redirect, useLocation } from 'react-router-dom';
 
-import { createBrowserHistory } from 'history';
-import * as Sentry from "@sentry/react";
-import { BrowserTracing } from "@sentry/tracing";
 // import { useIdleTimer } from 'react-idle-timer';
 
 import Tabs from 'containers/Tabs';
@@ -37,65 +34,29 @@ import Settings from 'pages/Settings';
 
 import ContextsProvider, { ZkAccountContext } from 'contexts';
 
-const SentryRoute = Sentry.withSentryRouting(Route);
-
-const history = createBrowserHistory();
-
-const PUBLIC_KEY = process.env.REACT_APP_SENTRY_PUBLIC_KEY;
-const PRIVATE_KEY = process.env.REACT_APP_SENTRY_PRIVATE_KEY;
-const PROJECT_ID = process.env.REACT_APP_SENTRY_PROJECT_ID;
-
-let sentryDsn;
-if (PUBLIC_KEY && PRIVATE_KEY && PROJECT_ID) {
-  sentryDsn = `https://${PUBLIC_KEY}@${PRIVATE_KEY}.ingest.sentry.io/${PROJECT_ID}`;
-}
-
-Sentry.init({
-  dsn: sentryDsn,
-  tunnel: undefined, // process.env.REACT_APP_HOSTING === 'netlify' ? '/telemetry' : 
-  integrations: [
-    new BrowserTracing({
-      routingInstrumentation: Sentry.reactRouterV5Instrumentation(history),
-    }),
-    new Sentry.Integrations.Breadcrumbs({
-      dom: { serializeAttribute: 'aria-label' },
-    }),
-  ],
-  tracesSampleRate: 1.0,
-  beforeBreadcrumb: breadcrumb => {
-    if (breadcrumb.category === 'navigation' && breadcrumb.data) {
-      try {
-        ['from', 'to'].forEach(param => {
-          if (breadcrumb.data[param].includes('?gift-code')) {
-            breadcrumb.data[param] = breadcrumb.data[param].split('?')[0] + '?gift-code=XXX';
-          }
-        });
-      } catch (error) { }
-    }
-    return breadcrumb;
-  }
-});
+// Automatic error and navigation telemetry is disabled for the privacy wallet.
+// Existing captureException calls have no initialized transport.
 
 const Routes = ({ params }) => (
   <Switch>
-    <SentryRoute exact strict path="/home">
+    <Route exact strict path="/home">
       <Home />
-    </SentryRoute>
-    <SentryRoute exact strict path="/deposit">
+    </Route>
+    <Route exact strict path="/deposit">
       <Deposit />
-    </SentryRoute>
-    <SentryRoute exact strict path="/transfer">
+    </Route>
+    <Route exact strict path="/transfer">
       <Transfer />
-    </SentryRoute>
-    <SentryRoute exact strict path="/withdraw">
+    </Route>
+    <Route exact strict path="/withdraw">
       <Withdraw />
-    </SentryRoute>
-    <SentryRoute exact strict path="/history">
+    </Route>
+    <Route exact strict path="/history">
       <History />
-    </SentryRoute>
-    <SentryRoute exact strict path="/settings">
+    </Route>
+    <Route exact strict path="/settings">
       <Settings />
-    </SentryRoute>
+    </Route>
     <Redirect to={'/home' + params} />
   </Switch>
 );
@@ -140,14 +101,14 @@ const MainApp = () => {
 export default () => (
   <HashRouter>
     <Switch>
-      <SentryRoute exact strict path="/payment/:address">
+      <Route exact strict path="/payment/:address">
         <Payment />
-      </SentryRoute>
-      <SentryRoute>
+      </Route>
+      <Route>
         <ContextsProvider>
           <MainApp />
         </ContextsProvider>
-      </SentryRoute>
+      </Route>
     </Switch>
   </HashRouter>
 );

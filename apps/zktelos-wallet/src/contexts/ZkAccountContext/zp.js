@@ -6,14 +6,13 @@ import { ProverMode } from 'zkbob-client-js/lib/config';
 import { TX_STATUSES } from 'constants';
 import config from 'config';
 
-const createClient = (currentPoolAlias, supportId, callback) => {
+const createClient = (currentPoolAlias, callback) => {
   return ZkBobClient.create(
     {
       pools: config.pools,
       chains: config.chains,
       snarkParams: config.snarkParams,
       extraPrefixes: config.extraPrefixes,
-      supportId,
       snarkParamsSet: config.snarkParamsSet
     },
     currentPoolAlias,
@@ -21,17 +20,17 @@ const createClient = (currentPoolAlias, supportId, callback) => {
   );
 };
 
-const createAccount = async (zkClient, secretKey, birthIndex, useDelegatedProver) => {
+const createAccount = async (zkClient, secretKey, birthIndex) => {
   let sk = ethers.utils.isValidMnemonic(secretKey)
     ? deriveSpendingKeyZkBob(secretKey)
     : ethers.utils.arrayify(secretKey);
   const currentPoolAlias = zkClient.currentPool();
-  const proverExists = config.pools[currentPoolAlias].delegatedProverUrls.length > 0;
   return zkClient.login({
     sk,
     pool: currentPoolAlias,
     birthindex: birthIndex,
-    proverMode: (useDelegatedProver && proverExists) ? ProverMode.DelegatedWithFallback : ProverMode.Local,
+    // A delegated prover receives the private witness. Keep it on this device.
+    proverMode: ProverMode.Local,
   });
 };
 
