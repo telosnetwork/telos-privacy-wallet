@@ -168,6 +168,48 @@ impl State {
         proof
     }
 
+    fn note_proof(
+        &self,
+        subtree_index: usize,
+        output_hashes: &[Num<Fr>],
+        note_slot: usize,
+    ) -> MerkleProof<Fr, { constants::HEIGHT }> {
+        let item_index = note_slot + 1;
+        assert!(item_index < output_hashes.len());
+        assert_eq!(
+            self.leaves[subtree_index],
+            out_commitment_hash(output_hashes, &*POOL_PARAMS)
+        );
+        let mut layer = output_hashes.to_vec();
+        let mut lower_siblings = Vec::new();
+        let mut lower_path = Vec::new();
+        for height in 0..constants::OUTPLUSONELOG {
+            lower_siblings.push(layer[(item_index >> height) ^ 1]);
+            lower_path.push(((item_index >> height) & 1) == 1);
+            layer = layer
+                .chunks_exact(2)
+                .map(|pair| poseidon(pair, POOL_PARAMS.compress()))
+                .collect();
+        }
+        assert_eq!(layer[0], self.leaves[subtree_index]);
+        let upper = self.upper_proof(subtree_index);
+        let proof = MerkleProof {
+            sibling: lower_siblings
+                .into_iter()
+                .chain(upper.sibling.iter().copied())
+                .collect(),
+            path: lower_path
+                .into_iter()
+                .chain(upper.path.iter().copied())
+                .collect(),
+        };
+        assert_eq!(
+            poseidon_merkle_proof_root(output_hashes[item_index], &proof, POOL_PARAMS.compress()),
+            self.root()
+        );
+        proof
+    }
+
     fn append_witness(&mut self, leaf: Num<Fr>) -> (TreePub<Fr>, TreeSec<Fr>) {
         let before = self.root();
         let index = self.leaves.len();
@@ -604,6 +646,336 @@ fn unsafe_current_stagezero_funded_flow_proof() {
     });
     let out_path =
         std::env::var("UNSAFE_PR7_FUNDED_FLOW_OUT").expect("new funded-flow output path required");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(out_path)
+        .unwrap();
+    serde_json::to_writer_pretty(&mut file, &output).unwrap();
+    file.write_all(b"\n").unwrap();
+    file.sync_all().unwrap();
+}
+
+/// A separately derived recipient key discovers the exact funded transfer
+/// memo and spends its physical note at global position 129. The previous
+/// three proofs are pinned sealed inputs, not regenerated in this test.
+#[test]
+#[ignore = "explicit opt-in unsafe Stage 0 recipient-note spend; never use for production"]
+fn unsafe_current_stagezero_recipient_note_spend() {
+    const TRANSFER_STAGE_HASH: &str =
+        "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7843ba30";
+    const TREE_STAGE_HASH: &str =
+        "6fa8054b88077e4f531eb3e7fcf094ea9e2746672ea2788f816b2c4a13f3e68f";
+    const PRIOR_FUNDED_HASH: &str =
+        "9d8fe1ee19caec796c8f94c77d224a1d646c62d0b6a8e682d32815511bf0e2c7";
+    const DEPOSIT_HASH: &str = "e5f938e84ef9bfa22275e7d996c5d911a6b8750e0963c281149545e728e24107";
+
+    let deposit_bytes = std::fs::read(
+        std::env::var("UNSAFE_PR7_FIRST_DEPOSIT_PROOF").expect("sealed first deposit path"),
+    )
+    .unwrap();
+    assert_eq!(hex::encode(Sha256::digest(&deposit_bytes)), DEPOSIT_HASH);
+    let deposit: serde_json::Value = serde_json::from_slice(&deposit_bytes).unwrap();
+    assert_eq!(deposit["sourceTree"], SOURCE_TREE);
+    let first_inputs = deposit["publicInputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(parse_num)
+        .collect::<Vec<_>>();
+    let first_tree_inputs = deposit["treeUpdate"]["publicInputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(parse_num)
+        .collect::<Vec<_>>();
+    let first_memo = hex::decode(
+        deposit["memoDataHex"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("0x"),
+    )
+    .unwrap();
+    let sender_key = Num::<Fs>::from(23u64);
+    let sender_eta = derive_key_eta(derive_key_a(sender_key, &*POOL_PARAMS).x, &*POOL_PARAMS);
+    let first_raw = domain::strip_domain(&first_memo[8..], &proxy()).unwrap();
+    let (first_account, first_decrypted_notes) =
+        cipher::decrypt_out(sender_eta, &first_raw, &*POOL_PARAMS).unwrap();
+    assert!(first_decrypted_notes.is_empty());
+    let zero_notes: SizedVec<Note<Fr>, { constants::OUT }> =
+        (0..constants::OUT).map(|_| zero_note()).collect();
+    let first_hashes = output_hashes(first_account, &zero_notes);
+    assert_eq!(
+        out_commitment_hash(&first_hashes, &*POOL_PARAMS),
+        first_inputs[2]
+    );
+    let mut state = State::new();
+    assert_eq!(state.root(), first_inputs[0]);
+    let (first_tree, _) = state.append_witness(first_inputs[2]);
+    assert_eq!(first_tree.root_after, first_tree_inputs[1]);
+
+    let prior_bytes = std::fs::read(
+        std::env::var("UNSAFE_PR7_FUNDED_PROOFS").expect("sealed funded-flow proof path"),
+    )
+    .unwrap();
+    assert_eq!(hex::encode(Sha256::digest(&prior_bytes)), PRIOR_FUNDED_HASH);
+    let prior: serde_json::Value = serde_json::from_slice(&prior_bytes).unwrap();
+    assert_eq!(
+        prior["schema"],
+        "telos-pr7-wallet-adapter-unsafe-funded-flow-v1"
+    );
+    assert_eq!(prior["sourceTree"], SOURCE_TREE);
+    assert_eq!(prior["firstDepositProofSha256"], DEPOSIT_HASH);
+    assert_eq!(prior["transferStage0Sha256"], TRANSFER_STAGE_HASH);
+    assert_eq!(prior["treeStage0Sha256"], TREE_STAGE_HASH);
+    assert_eq!(prior["testOnly"], true);
+    assert_eq!(prior["unsafeZeroContribution"], true);
+    let prior_operations = prior["operations"].as_array().unwrap();
+    assert_eq!(prior_operations.len(), 2);
+    assert_eq!(prior_operations[0]["kind"], "transfer");
+    assert_eq!(prior_operations[1]["kind"], "withdraw");
+
+    let recipient_key = Num::<Fs>::from(37u64);
+    let recipient_eta = derive_key_eta(derive_key_a(recipient_key, &*POOL_PARAMS).x, &*POOL_PARAMS);
+    let note_d = BoundedNum::new(Num::from(29u64));
+    let recipient_note = Note {
+        d: note_d,
+        p_d: derive_key_p_d(note_d.to_num(), recipient_eta, &*POOL_PARAMS).x,
+        b: BoundedNum::new(Num::from(HALF)),
+        t: BoundedNum::new(Num::from(77u64)),
+    };
+    let transfer_memo = hex::decode(
+        prior_operations[0]["memoDataHex"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("0x"),
+    )
+    .unwrap();
+    let transfer_raw = domain::strip_domain(&transfer_memo[8..], &proxy()).unwrap();
+    let receiver_incoming = cipher::decrypt_in(recipient_eta, &transfer_raw, &*POOL_PARAMS);
+    assert_eq!(
+        receiver_incoming,
+        vec![Some(recipient_note)],
+        "recipient cannot decrypt exact funded note"
+    );
+    let sender_incoming = cipher::decrypt_in(sender_eta, &transfer_raw, &*POOL_PARAMS);
+    assert_eq!(
+        sender_incoming,
+        vec![None],
+        "sender must not decrypt as the incoming-note recipient"
+    );
+    // The sender may still inspect their own outgoing note with decrypt_out.
+    let (sender_outgoing_account, sender_outgoing_notes) =
+        cipher::decrypt_out(sender_eta, &transfer_raw, &*POOL_PARAMS).unwrap();
+    assert_eq!(sender_outgoing_notes, vec![recipient_note]);
+
+    let transfer_inputs = prior_operations[0]["publicInputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(parse_num)
+        .collect::<Vec<_>>();
+    let transfer_tree_inputs = prior_operations[0]["treeUpdate"]["publicInputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(parse_num)
+        .collect::<Vec<_>>();
+    assert_eq!(transfer_inputs[0], state.root());
+    assert_eq!(
+        transfer_inputs[4],
+        Num::<Fr>::from_uint_reduced(NumRepr(Uint::from_big_endian(&Keccak256::digest(
+            &transfer_memo
+        ))))
+    );
+    let transfer_notes: SizedVec<Note<Fr>, { constants::OUT }> = std::iter::once(recipient_note)
+        .chain((1..constants::OUT).map(|_| zero_note()))
+        .collect();
+    let transfer_hashes = output_hashes(sender_outgoing_account, &transfer_notes);
+    let transfer_commit = out_commitment_hash(&transfer_hashes, &*POOL_PARAMS);
+    assert_eq!(transfer_commit, transfer_inputs[2]);
+    let (second_tree, _) = state.append_witness(transfer_commit);
+    assert_eq!(second_tree.root_after, transfer_tree_inputs[1]);
+    assert_eq!(transfer_tree_inputs[2], transfer_commit);
+
+    let sender_final_d = BoundedNum::new(Num::from(19u64));
+    let sender_final = Account {
+        d: sender_final_d,
+        p_d: derive_key_p_d(sender_final_d.to_num(), sender_eta, &*POOL_PARAMS).x,
+        i: BoundedNum::new(Num::from(256u64)),
+        b: BoundedNum::ZERO,
+        e: BoundedNum::new(Num::from(192 * BALANCE)),
+    };
+    let final_hashes = output_hashes(sender_final, &zero_notes);
+    let sender_withdraw_inputs = prior_operations[1]["publicInputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(parse_num)
+        .collect::<Vec<_>>();
+    let sender_withdraw_tree_inputs = prior_operations[1]["treeUpdate"]["publicInputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(parse_num)
+        .collect::<Vec<_>>();
+    assert_eq!(sender_withdraw_inputs[0], state.root());
+    assert_eq!(
+        sender_withdraw_inputs[2],
+        out_commitment_hash(&final_hashes, &*POOL_PARAMS)
+    );
+    let (third_tree, _) = state.append_witness(sender_withdraw_inputs[2]);
+    assert_eq!(third_tree.root_after, sender_withdraw_tree_inputs[1]);
+    assert_eq!(sender_withdraw_tree_inputs[2], sender_withdraw_inputs[2]);
+
+    let note_proof = state.note_proof(1, &transfer_hashes, 0);
+    let note_position = note_proof
+        .path
+        .iter()
+        .enumerate()
+        .fold(0u64, |index, (bit, is_set)| {
+            if *is_set {
+                index | (1u64 << bit)
+            } else {
+                index
+            }
+        });
+    assert_eq!(note_position, 129);
+    let initial_d = BoundedNum::new(Num::from(POOL_ID));
+    let initial_account = Account {
+        d: initial_d,
+        p_d: derive_key_p_d(initial_d.to_num(), recipient_eta, &*POOL_PARAMS).x,
+        i: BoundedNum::ZERO,
+        b: BoundedNum::ZERO,
+        e: BoundedNum::ZERO,
+    };
+    let output_d = BoundedNum::new(Num::from(41u64));
+    let output_account = Account {
+        d: output_d,
+        p_d: derive_key_p_d(output_d.to_num(), recipient_eta, &*POOL_PARAMS).x,
+        i: BoundedNum::new(Num::from(384u64)),
+        b: BoundedNum::ZERO,
+        e: BoundedNum::new(Num::from(HALF * (384 - 129))),
+    };
+    let output_hashes = output_hashes(output_account, &zero_notes);
+    let recipient_secret = TransferSec {
+        tx: Tx {
+            input: (
+                initial_account,
+                std::iter::once(recipient_note)
+                    .chain((1..constants::IN).map(|_| dummy_note(recipient_eta)))
+                    .collect(),
+            ),
+            output: (output_account, zero_notes),
+        },
+        in_proof: (
+            dummy_proof(),
+            std::iter::once(note_proof)
+                .chain((1..constants::IN).map(|_| dummy_proof()))
+                .collect(),
+        ),
+        eddsa_s: Num::ZERO,
+        eddsa_r: Num::ZERO,
+        eddsa_a: derive_key_a(recipient_key, &*POOL_PARAMS).x,
+    };
+    let mut public_recipient = [0u8; 20];
+    public_recipient[18..].copy_from_slice(&[0xca, 0xfe]);
+    let witness = WithdrawalWitness {
+        public: TransferPub {
+            root: state.root(),
+            nullifier: nullifier(
+                initial_account.hash(&*POOL_PARAMS),
+                recipient_eta,
+                Num::ZERO,
+                &*POOL_PARAMS,
+            ),
+            out_commit: out_commitment_hash(&output_hashes, &*POOL_PARAMS),
+            delta: make_delta(
+                -Num::from(HALF),
+                Num::ZERO,
+                Num::from(384u64),
+                Num::from(POOL_ID),
+            ),
+            memo: Num::ZERO,
+        },
+        secret: recipient_secret,
+        signing_key: recipient_key,
+        pool_id: POOL_ID,
+        amount: HALF,
+        fee: 0,
+        recipient: public_recipient,
+        proxy: proxy(),
+    };
+    let finalized = finalize_withdrawal(witness).unwrap();
+    assert_eq!(&finalized.memo[16..36], &public_recipient);
+    let cs = DebugCS::rc_new();
+    let public = CTransferPub::alloc(&cs, Some(&finalized.public));
+    let secret = CTransferSec::alloc(&cs, Some(&finalized.secret));
+    c_transfer(&public, &secret, &*POOL_PARAMS);
+
+    let transfer_mpc = read_stage("UNSAFE_PR7_STAGE0_TRANSFER", TRANSFER_STAGE_HASH);
+    let transfer_parameters = transfer_parameters(&transfer_mpc);
+    let transfer_vk = transfer_parameters.get_vk();
+    let expected_vk: serde_json::Value = serde_json::from_reader(
+        std::fs::File::open(std::env::var("UNSAFE_PR7_STAGE0_TRANSFER_VK").unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(serde_json::to_value(&transfer_vk).unwrap(), expected_vk);
+    let result = prove_finalized_with_unchecked_key(&transfer_parameters, finalized);
+    assert!(verify(&transfer_vk, &result.proof, &result.public_inputs));
+    assert_eq!(result.public_inputs[0], sender_withdraw_tree_inputs[1]);
+    assert_ne!(result.public_inputs[1], first_inputs[1]);
+    assert_ne!(result.public_inputs[1], transfer_inputs[1]);
+    assert_ne!(result.public_inputs[1], sender_withdraw_inputs[1]);
+
+    let tree_mpc = read_stage("UNSAFE_PR7_STAGE0_TREE", TREE_STAGE_HASH);
+    let tree_parameters = tree_parameters(&tree_mpc);
+    let tree_vk = tree_parameters.get_vk();
+    let expected_tree_vk: serde_json::Value = serde_json::from_reader(
+        std::fs::File::open(std::env::var("UNSAFE_PR7_STAGE0_TREE_VK").unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(serde_json::to_value(&tree_vk).unwrap(), expected_tree_vk);
+    let (tree_public, tree_secret) = state.append_witness(result.public.out_commit);
+    let (tree_inputs, tree_proof) = prove(
+        &tree_parameters,
+        &tree_public,
+        &tree_secret,
+        |public, secret| tree_update(&public, &secret, &*POOL_PARAMS),
+    );
+    assert!(verify(&tree_vk, &tree_proof, &tree_inputs));
+    assert_eq!(tree_inputs[0], result.public_inputs[0]);
+    assert_eq!(tree_inputs[2], result.public_inputs[2]);
+
+    let output = serde_json::json!({
+        "schema": "telos-pr7-wallet-adapter-unsafe-recipient-spend-v1",
+        "testOnly": true,
+        "unsafeZeroContribution": true,
+        "sourceTree": SOURCE_TREE,
+        "transferStage0Sha256": TRANSFER_STAGE_HASH,
+        "treeStage0Sha256": TREE_STAGE_HASH,
+        "firstDepositProofSha256": DEPOSIT_HASH,
+        "previousFundedProofSha256": PRIOR_FUNDED_HASH,
+        "poolId": POOL_ID,
+        "poolAddress": "0x000000000000000000000000000000000000F003",
+        "notePosition": 129,
+        "noteValueZkUnits": HALF,
+        "receiverDecryptMatches": true,
+        "senderIncomingDecryptRejected": true,
+        "kind": "withdraw",
+        "recipient": "0x000000000000000000000000000000000000cAFE",
+        "memoDataHex": format!("0x{}", hex::encode(result.memo)),
+        "publicInputs": result.public_inputs.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "proof": result.proof,
+        "treeUpdate": {
+            "publicInputs": tree_inputs.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "proof": tree_proof,
+            "verifiedAgainstSealedStage0Vk": true,
+        },
+        "verifiedAgainstSealedStage0Vk": true,
+    });
+    let out_path =
+        std::env::var("UNSAFE_PR7_RECIPIENT_SPEND_OUT").expect("new recipient spend output path");
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

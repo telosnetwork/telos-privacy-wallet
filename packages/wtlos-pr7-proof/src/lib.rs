@@ -178,7 +178,7 @@ pub fn finalize_private_transfer(
     if witness.public.root == Num::ZERO {
         return Err(AdapterError::WrongRoot);
     }
-    if witness.secret.tx.input.0.b.to_num() == Num::ZERO {
+    if !has_funded_input(&witness.secret) {
         return Err(AdapterError::UnfundedInput);
     }
     finalize_signed_transaction(
@@ -216,7 +216,7 @@ pub fn finalize_withdrawal(
     if witness.public.root == Num::ZERO {
         return Err(AdapterError::WrongRoot);
     }
-    if witness.secret.tx.input.0.b.to_num() == Num::ZERO {
+    if !has_funded_input(&witness.secret) {
         return Err(AdapterError::UnfundedInput);
     }
     let mut fixed = [0u8; 36];
@@ -231,6 +231,16 @@ pub fn finalize_withdrawal(
         TransactionKind::Withdraw,
         &fixed,
     )
+}
+
+fn has_funded_input(secret: &TransferSec<Fr>) -> bool {
+    secret.tx.input.0.b.to_num() != Num::ZERO
+        || secret
+            .tx
+            .input
+            .1
+            .iter()
+            .any(|note| note.b.to_num() != Num::ZERO)
 }
 
 fn finalize_signed_transaction(
