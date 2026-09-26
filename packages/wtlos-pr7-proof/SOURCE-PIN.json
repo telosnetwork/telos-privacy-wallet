@@ -1,0 +1,11 @@
+{
+  "schema": "wtlos-pr7-proof-local-draft-v1",
+  "circuits_repository": "https://github.com/telosnetwork/telos-privacy-circuits",
+  "published_pr7_head_prior_readback": "2cf3102d02ab1e9efe23090e3541e8f09cece97c",
+  "local_equivalent_commit": "78b50d55ece7d60aa6aeb536b2b0e78739bba5ac",
+  "vendored_git_tree": "7a22196e1d4a791b452a6140bdfa915298f3f1da",
+  "transfer_identity_sha256": "01ae02544199f79fcc21e2ddfd1f3bb1a35d680979cceec59e764fb3671be2b0",
+  "transfer_r1cs_sha256": "6051176b4238978fc60d214db4b2755762b54b090ae4300e88b3e7371c27ce37",
+  "qualified_ceremony": false,
+  "production_release_approved": false
+}

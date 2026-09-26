@@ -1,0 +1,75 @@
+{
+  "constant_one": "input_0",
+  "format": "fawkes-r1cs-slice-v1",
+  "gates": [
+    {
+      "a": [
+        {
+          "coefficient": "1",
+          "variable": "aux_1"
+        }
+      ],
+      "b": [
+        {
+          "coefficient": "21888242871839275222246405745257275088548364400416034343698204186575808495616",
+          "variable": "input_0"
+        },
+        {
+          "coefficient": "1",
+          "variable": "aux_1"
+        }
+      ],
+      "c": [
+        {
+          "coefficient": "0",
+          "variable": "input_0"
+        }
+      ]
+    },
+    {
+      "a": [
+        {
+          "coefficient": "1",
+          "variable": "aux_0"
+        }
+      ],
+      "b": [
+        {
+          "coefficient": "1",
+          "variable": "aux_1"
+        }
+      ],
+      "c": [
+        {
+          "coefficient": "1",
+          "variable": "aux_2"
+        }
+      ]
+    },
+    {
+      "a": [
+        {
+          "coefficient": "1",
+          "variable": "aux_2"
+        }
+      ],
+      "b": [
+        {
+          "coefficient": "1",
+          "variable": "input_0"
+        }
+      ],
+      "c": [
+        {
+          "coefficient": "0",
+          "variable": "input_0"
+        }
+      ]
+    }
+  ],
+  "is_initial": "aux_1",
+  "modulus": "21888242871839275222246405745257275088548364400416034343698204186575808495617",
+  "num_aux": 3,
+  "num_inputs": 1,
+  "position": "aux_0"
+}

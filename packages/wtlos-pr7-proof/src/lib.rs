@@ -1,0 +1,422 @@
+//! Opt-in, offline-only WTLOS deposit proof adapter for the pinned PR7 circuit.
+//!
+//! The existing wallet history APIs still use the embedded 1.4.0 circuit. This
+//! crate uses a separate PR7 type universe, so callers must construct a PR7
+//! witness explicitly. No live wallet route or relayer submission uses it.
+
+pub const SOURCE_TREE: &str = "7a22196e1d4a791b452a6140bdfa915298f3f1da";
+
+#[path = "../../libzkbob-rs/src/wtlos_v1_domain.rs"]
+pub mod domain;
+
+use domain::{build_memo, TransactionKind};
+use libzeropool_pr7::fawkes_crypto::engines::bn256::{Fr, Fs};
+use libzeropool_pr7::{
+    circuit::tx::c_transfer,
+    constants,
+    fawkes_crypto::{
+        backend::bellman_groth16::{
+            engines::Bn256,
+            prover::{prove, Proof},
+            Parameters,
+        },
+        ff_uint::{Num, NumRepr, Uint},
+    },
+    native::{
+        cipher,
+        key::{derive_key_a, derive_key_eta},
+        tx::{
+            make_delta, out_commitment_hash, parse_delta, tx_hash, tx_sign, tx_verify, TransferPub,
+            TransferSec,
+        },
+    },
+    POOL_PARAMS,
+};
+use sha3::{Digest, Keccak256};
+use zeroize::Zeroizing;
+
+pub struct DepositWitness {
+    pub public: TransferPub<Fr>,
+    pub secret: TransferSec<Fr>,
+    pub signing_key: Num<Fs>,
+    pub pool_id: u32,
+    /// Deposit amount in pool units (one unit = 10^9 WTLOS base units).
+    pub amount: u64,
+    /// Relayer fee in the same pool units, encoded in the memo's first 8 bytes.
+    pub fee: u64,
+    pub proxy: [u8; 20],
+}
+
+pub struct FinalizedDeposit {
+    pub public: TransferPub<Fr>,
+    pub memo: Vec<u8>,
+    secret: TransferSec<Fr>,
+}
+
+pub struct DepositProof {
+    pub public: TransferPub<Fr>,
+    pub memo: Vec<u8>,
+    pub public_inputs: Vec<Num<Fr>>,
+    pub proof: Proof<Bn256>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdapterError {
+    InvalidPoolId,
+    InvalidDepositAmount,
+    WrongDelta,
+    FundedOutputNote,
+    WrongOutputCommitment,
+    WrongSigningKey,
+    InvalidSignature,
+    RandomnessUnavailable,
+    Domain(domain::DomainError),
+}
+
+/// Finalize exact calldata memo before computing the PR7 signing message.
+/// `public` and `secret` must already be source-matched PR7 witness values.
+pub fn finalize_deposit(mut witness: DepositWitness) -> Result<FinalizedDeposit, AdapterError> {
+    if witness.pool_id == 0 || witness.pool_id >= (1 << constants::POOLID_SIZE_BITS) {
+        return Err(AdapterError::InvalidPoolId);
+    }
+    if witness.amount <= witness.fee || witness.amount - witness.fee > i64::MAX as u64 {
+        return Err(AdapterError::InvalidDepositAmount);
+    }
+
+    let params = &*POOL_PARAMS;
+    let pool_id = Num::<Fr>::from(witness.pool_id);
+    let (_, _, index, parsed_pool_id) = parse_delta(witness.public.delta);
+    if parsed_pool_id != pool_id
+        || witness.public.delta
+            != make_delta::<Fr>(
+                Num::from(witness.amount - witness.fee),
+                Num::ZERO,
+                index,
+                pool_id,
+            )
+    {
+        return Err(AdapterError::WrongDelta);
+    }
+
+    if witness.secret.tx.output.1.iter().any(|note| {
+        note.d.to_num() != Num::ZERO
+            || note.p_d != Num::ZERO
+            || note.b.to_num() != Num::ZERO
+            || note.t.to_num() != Num::ZERO
+    }) {
+        return Err(AdapterError::FundedOutputNote);
+    }
+
+    let a = derive_key_a(witness.signing_key, params);
+    if a.x == Num::ZERO || a.x != witness.secret.eddsa_a {
+        return Err(AdapterError::WrongSigningKey);
+    }
+    let eta = derive_key_eta(a.x, params);
+    if eta.to_other_reduced() == Num::<Fs>::ZERO {
+        return Err(AdapterError::WrongSigningKey);
+    }
+
+    let out_account = witness.secret.tx.output.0;
+    let mut encryption_entropy = Zeroizing::new([0u8; 32]);
+    getrandom::getrandom(&mut *encryption_entropy)
+        .map_err(|_| AdapterError::RandomnessUnavailable)?;
+    let raw_ciphertext = cipher::encrypt(&*encryption_entropy, eta, out_account, &[], params);
+    let memo = build_memo(
+        TransactionKind::Deposit,
+        &witness.fee.to_be_bytes(),
+        &raw_ciphertext,
+        &witness.proxy,
+    )
+    .map_err(AdapterError::Domain)?;
+    let memo_hash = Keccak256::digest(&memo);
+    let memo_field = Num::<Fr>::from_uint_reduced(NumRepr(Uint::from_big_endian(&memo_hash)));
+    witness.public.memo = memo_field;
+
+    let in_account_hash = witness.secret.tx.input.0.hash(params);
+    let mut input_hashes = Vec::with_capacity(constants::IN + 1);
+    input_hashes.push(in_account_hash);
+    input_hashes.extend(
+        witness
+            .secret
+            .tx
+            .input
+            .1
+            .iter()
+            .map(|note| note.hash(params)),
+    );
+
+    let mut output_hashes = Vec::with_capacity(constants::OUT + 1);
+    output_hashes.push(out_account.hash(params));
+    output_hashes.extend(
+        witness
+            .secret
+            .tx
+            .output
+            .1
+            .iter()
+            .map(|note| note.hash(params)),
+    );
+    let out_commit = out_commitment_hash(&output_hashes, params);
+    if out_commit != witness.public.out_commit {
+        return Err(AdapterError::WrongOutputCommitment);
+    }
+
+    let signing_message = tx_hash(&input_hashes, out_commit, memo_field, pool_id, params);
+    let (s, r) = tx_sign(witness.signing_key, signing_message, params);
+    if !tx_verify(s, r, a.x, signing_message, params) {
+        return Err(AdapterError::InvalidSignature);
+    }
+    witness.secret.eddsa_s = s.to_other().expect("subgroup scalar fits SNARK field");
+    witness.secret.eddsa_r = r;
+
+    Ok(FinalizedDeposit {
+        public: witness.public,
+        memo,
+        secret: witness.secret,
+    })
+}
+
+/// This draft does not authenticate the proving-key identity. Keep this entry
+/// point offline until a qualified-key loader and full client route exist.
+pub fn prove_deposit_with_unchecked_key(
+    parameters: &Parameters<Bn256>,
+    witness: DepositWitness,
+) -> Result<DepositProof, AdapterError> {
+    let finalized = finalize_deposit(witness)?;
+    let (public_inputs, proof) = prove(
+        parameters,
+        &finalized.public,
+        &finalized.secret,
+        |public, secret| c_transfer(&public, &secret, &*POOL_PARAMS),
+    );
+    Ok(DepositProof {
+        public: finalized.public,
+        memo: finalized.memo,
+        public_inputs,
+        proof,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libzeropool_pr7::{
+        fawkes_crypto::{core::sizedvec::SizedVec, native::poseidon::MerkleProof},
+        native::{
+            account::Account, boundednum::BoundedNum, key::derive_key_p_d, note::Note, tx::Tx,
+        },
+    };
+
+    const POOL_ID: u32 = 0x10203;
+    const PROXY: [u8; 20] = [0x42; 20];
+
+    fn zero_note() -> Note<Fr> {
+        Note {
+            d: BoundedNum::ZERO,
+            p_d: Num::ZERO,
+            b: BoundedNum::ZERO,
+            t: BoundedNum::ZERO,
+        }
+    }
+
+    fn zero_proof() -> MerkleProof<Fr, { constants::HEIGHT }> {
+        MerkleProof {
+            sibling: (0..constants::HEIGHT).map(|_| Num::ZERO).collect(),
+            path: (0..constants::HEIGHT).map(|_| false).collect(),
+        }
+    }
+
+    fn witness() -> DepositWitness {
+        let params = &*POOL_PARAMS;
+        let signing_key = Num::<Fs>::from(23u64);
+        let a = derive_key_a(signing_key, params);
+        let eta = derive_key_eta(a.x, params);
+        let input_d = BoundedNum::new(Num::<Fr>::from(POOL_ID));
+        let input_p_d = derive_key_p_d(input_d.to_num(), eta, params).x;
+        let input_account = Account {
+            d: input_d,
+            p_d: input_p_d,
+            i: BoundedNum::ZERO,
+            b: BoundedNum::ZERO,
+            e: BoundedNum::ZERO,
+        };
+        let output_d = BoundedNum::new(Num::<Fr>::from(17u64));
+        let output_account = Account {
+            d: output_d,
+            p_d: derive_key_p_d(output_d.to_num(), eta, params).x,
+            i: BoundedNum::new(Num::from(128u64)),
+            b: BoundedNum::new(Num::from(5u64)),
+            ..input_account
+        };
+        let input_notes: SizedVec<_, { constants::IN }> = (0..constants::IN)
+            .map(|i| {
+                let d = BoundedNum::new(Num::<Fr>::from(31u64 + i as u64));
+                Note {
+                    d,
+                    p_d: derive_key_p_d(d.to_num(), eta, params).x,
+                    b: BoundedNum::ZERO,
+                    t: BoundedNum::ZERO,
+                }
+            })
+            .collect();
+        let output_notes: SizedVec<_, { constants::OUT }> =
+            (0..constants::OUT).map(|_| zero_note()).collect();
+        let mut output_hashes = vec![output_account.hash(params)];
+        output_hashes.extend(output_notes.iter().map(|note| note.hash(params)));
+        let out_commit = out_commitment_hash(&output_hashes, params);
+        let pool_id = Num::from(POOL_ID);
+        DepositWitness {
+            public: TransferPub {
+                root: Num::ZERO,
+                nullifier: libzeropool_pr7::native::tx::nullifier(
+                    input_account.hash(params),
+                    eta,
+                    Num::ZERO,
+                    params,
+                ),
+                out_commit,
+                delta: make_delta(Num::from(5u64), Num::ZERO, Num::from(128u64), pool_id),
+                memo: Num::ZERO,
+            },
+            secret: TransferSec {
+                tx: Tx {
+                    input: (input_account, input_notes),
+                    output: (output_account, output_notes),
+                },
+                in_proof: (
+                    zero_proof(),
+                    (0..constants::IN).map(|_| zero_proof()).collect(),
+                ),
+                eddsa_s: Num::ZERO,
+                eddsa_r: Num::ZERO,
+                eddsa_a: a.x,
+            },
+            signing_key,
+            pool_id: POOL_ID,
+            amount: 12,
+            fee: 7,
+            proxy: PROXY,
+        }
+    }
+
+    #[test]
+    fn memo_pool_and_proxy_are_signed_together() {
+        let finalized = finalize_deposit(witness()).unwrap();
+        assert_eq!(&finalized.memo[..8], &7u64.to_be_bytes());
+        assert_eq!(&finalized.memo[8..12], &[1, 0, 0, 0]);
+        assert_eq!(&finalized.memo[12..16], b"TPD1");
+        assert_eq!(&finalized.memo[16..36], &PROXY);
+
+        let actual_hash = Keccak256::digest(&finalized.memo);
+        let expected_memo =
+            Num::<Fr>::from_uint_reduced(NumRepr(Uint::from_big_endian(&actual_hash)));
+        assert_eq!(finalized.public.memo, expected_memo);
+
+        let params = &*POOL_PARAMS;
+        let mut input_hashes = vec![finalized.secret.tx.input.0.hash(params)];
+        input_hashes.extend(
+            finalized
+                .secret
+                .tx
+                .input
+                .1
+                .iter()
+                .map(|note| note.hash(params)),
+        );
+        let a = finalized.secret.eddsa_a;
+        let s = finalized.secret.eddsa_s.to_other().unwrap();
+        let r = finalized.secret.eddsa_r;
+        let signed = tx_hash(
+            &input_hashes,
+            finalized.public.out_commit,
+            finalized.public.memo,
+            Num::from(POOL_ID),
+            params,
+        );
+        assert!(tx_verify(s, r, a, signed, params));
+
+        let changed_memo = tx_hash(
+            &input_hashes,
+            finalized.public.out_commit,
+            finalized.public.memo + Num::ONE,
+            Num::from(POOL_ID),
+            params,
+        );
+        assert!(!tx_verify(s, r, a, changed_memo, params));
+
+        let changed_pool = tx_hash(
+            &input_hashes,
+            finalized.public.out_commit,
+            finalized.public.memo,
+            Num::from(POOL_ID + 1),
+            params,
+        );
+        assert!(!tx_verify(s, r, a, changed_pool, params));
+    }
+
+    #[test]
+    fn inconsistent_deposit_witness_is_rejected_before_proving() {
+        let mut value = witness();
+        value.public.delta += Num::ONE;
+        assert!(matches!(
+            finalize_deposit(value),
+            Err(AdapterError::WrongDelta)
+        ));
+
+        let mut value = witness();
+        value.public.out_commit += Num::ONE;
+        assert!(matches!(
+            finalize_deposit(value),
+            Err(AdapterError::WrongOutputCommitment)
+        ));
+
+        let mut value = witness();
+        value.secret.tx.output.1[0].b = BoundedNum::new(Num::ONE);
+        assert!(matches!(
+            finalize_deposit(value),
+            Err(AdapterError::FundedOutputNote)
+        ));
+
+        let mut value = witness();
+        value.pool_id += 1;
+        assert!(matches!(
+            finalize_deposit(value),
+            Err(AdapterError::WrongDelta)
+        ));
+
+        let mut value = witness();
+        value.signing_key = Num::from(2u64);
+        assert!(matches!(
+            finalize_deposit(value),
+            Err(AdapterError::WrongSigningKey)
+        ));
+
+        let mut value = witness();
+        value.pool_id = 0;
+        assert!(matches!(
+            finalize_deposit(value),
+            Err(AdapterError::InvalidPoolId)
+        ));
+
+        let mut value = witness();
+        value.amount = value.fee;
+        assert!(matches!(
+            finalize_deposit(value),
+            Err(AdapterError::InvalidDepositAmount)
+        ));
+    }
+
+    #[test]
+    fn finalized_initial_deposit_satisfies_exact_pr7_transfer_circuit() {
+        use libzeropool_pr7::{
+            circuit::tx::{CTransferPub, CTransferSec},
+            fawkes_crypto::{circuit::cs::DebugCS, core::signal::Signal},
+        };
+
+        let finalized = finalize_deposit(witness()).unwrap();
+        let cs = DebugCS::rc_new();
+        let public = CTransferPub::alloc(&cs, Some(&finalized.public));
+        let secret = CTransferSec::alloc(&cs, Some(&finalized.secret));
+        c_transfer(&public, &secret, &*POOL_PARAMS);
+    }
+}
