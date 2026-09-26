@@ -1,4 +1,4 @@
-//! Opt-in, offline-only WTLOS deposit proof adapter for the pinned PR7 circuit.
+//! Opt-in, offline-only WTLOS proof adapter for the pinned PR7 circuit.
 //!
 //! The existing wallet history APIs still use the embedded 1.4.0 circuit. This
 //! crate uses a separate PR7 type universe, so callers must construct a PR7
@@ -21,10 +21,12 @@ use libzeropool_pr7::{
             Parameters,
         },
         ff_uint::{Num, NumRepr, Uint},
+        native::ecc::EdwardsPoint,
     },
     native::{
         cipher,
         key::{derive_key_a, derive_key_eta},
+        params::PoolParams,
         tx::{
             make_delta, out_commitment_hash, parse_delta, tx_hash, tx_sign, tx_verify, TransferPub,
             TransferSec,
@@ -47,25 +49,56 @@ pub struct DepositWitness {
     pub proxy: [u8; 20],
 }
 
-pub struct FinalizedDeposit {
+pub struct PrivateTransferWitness {
+    pub public: TransferPub<Fr>,
+    pub secret: TransferSec<Fr>,
+    pub signing_key: Num<Fs>,
+    pub pool_id: u32,
+    pub fee: u64,
+    pub proxy: [u8; 20],
+}
+
+pub struct WithdrawalWitness {
+    pub public: TransferPub<Fr>,
+    pub secret: TransferSec<Fr>,
+    pub signing_key: Num<Fs>,
+    pub pool_id: u32,
+    /// Total amount removed from the private balance, in pool units.
+    pub amount: u64,
+    /// Fee retained by the pool operator; the recipient receives amount - fee.
+    pub fee: u64,
+    pub recipient: [u8; 20],
+    pub proxy: [u8; 20],
+}
+
+pub struct FinalizedTransaction {
     pub public: TransferPub<Fr>,
     pub memo: Vec<u8>,
     secret: TransferSec<Fr>,
 }
 
-pub struct DepositProof {
+pub type FinalizedDeposit = FinalizedTransaction;
+
+pub struct TransactionProof {
     pub public: TransferPub<Fr>,
     pub memo: Vec<u8>,
     pub public_inputs: Vec<Num<Fr>>,
     pub proof: Proof<Bn256>,
 }
 
+pub type DepositProof = TransactionProof;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdapterError {
     InvalidPoolId,
     InvalidDepositAmount,
+    InvalidWithdrawalAmount,
+    UnfundedInput,
+    WrongRoot,
     WrongDelta,
     FundedOutputNote,
+    InvalidOutputNoteRecipient,
+    OutputNoteGap,
     WrongOutputCommitment,
     WrongSigningKey,
     InvalidSignature,
@@ -75,7 +108,7 @@ pub enum AdapterError {
 
 /// Finalize exact calldata memo before computing the PR7 signing message.
 /// `public` and `secret` must already be source-matched PR7 witness values.
-pub fn finalize_deposit(mut witness: DepositWitness) -> Result<FinalizedDeposit, AdapterError> {
+pub fn finalize_deposit(witness: DepositWitness) -> Result<FinalizedDeposit, AdapterError> {
     if witness.pool_id == 0 || witness.pool_id >= (1 << constants::POOLID_SIZE_BITS) {
         return Err(AdapterError::InvalidPoolId);
     }
@@ -83,7 +116,6 @@ pub fn finalize_deposit(mut witness: DepositWitness) -> Result<FinalizedDeposit,
         return Err(AdapterError::InvalidDepositAmount);
     }
 
-    let params = &*POOL_PARAMS;
     let pool_id = Num::<Fr>::from(witness.pool_id);
     let (_, _, index, parsed_pool_id) = parse_delta(witness.public.delta);
     if parsed_pool_id != pool_id
@@ -107,8 +139,115 @@ pub fn finalize_deposit(mut witness: DepositWitness) -> Result<FinalizedDeposit,
         return Err(AdapterError::FundedOutputNote);
     }
 
-    let a = derive_key_a(witness.signing_key, params);
-    if a.x == Num::ZERO || a.x != witness.secret.eddsa_a {
+    finalize_signed_transaction(
+        witness.public,
+        witness.secret,
+        witness.signing_key,
+        witness.pool_id,
+        witness.proxy,
+        TransactionKind::Deposit,
+        &witness.fee.to_be_bytes(),
+    )
+}
+
+#[cfg(test)]
+#[path = "funded_flow_tests.rs"]
+mod funded_flow_tests;
+
+/// Finalize a funded account spend with no public token movement. The PR7
+/// relation checks balances, note ownership, account membership, and paths.
+pub fn finalize_private_transfer(
+    witness: PrivateTransferWitness,
+) -> Result<FinalizedTransaction, AdapterError> {
+    if witness.fee > i64::MAX as u64 {
+        return Err(AdapterError::WrongDelta);
+    }
+    let (_, _, index, pool) = parse_delta(witness.public.delta);
+    if index == Num::ZERO
+        || pool != Num::from(witness.pool_id)
+        || witness.public.delta
+            != make_delta::<Fr>(
+                -Num::from(witness.fee),
+                Num::ZERO,
+                index,
+                Num::from(witness.pool_id),
+            )
+    {
+        return Err(AdapterError::WrongDelta);
+    }
+    if witness.public.root == Num::ZERO {
+        return Err(AdapterError::WrongRoot);
+    }
+    if witness.secret.tx.input.0.b.to_num() == Num::ZERO {
+        return Err(AdapterError::UnfundedInput);
+    }
+    finalize_signed_transaction(
+        witness.public,
+        witness.secret,
+        witness.signing_key,
+        witness.pool_id,
+        witness.proxy,
+        TransactionKind::Transfer,
+        &witness.fee.to_be_bytes(),
+    )
+}
+
+/// Finalize a WTLOS withdrawal. The native conversion field stays zero and
+/// the recipient address occupies the original V1 fixed-field offset.
+pub fn finalize_withdrawal(
+    witness: WithdrawalWitness,
+) -> Result<FinalizedTransaction, AdapterError> {
+    if witness.amount <= witness.fee || witness.amount > i64::MAX as u64 {
+        return Err(AdapterError::InvalidWithdrawalAmount);
+    }
+    let (_, _, index, pool) = parse_delta(witness.public.delta);
+    if index == Num::ZERO
+        || pool != Num::from(witness.pool_id)
+        || witness.public.delta
+            != make_delta::<Fr>(
+                -Num::from(witness.amount),
+                Num::ZERO,
+                index,
+                Num::from(witness.pool_id),
+            )
+    {
+        return Err(AdapterError::WrongDelta);
+    }
+    if witness.public.root == Num::ZERO {
+        return Err(AdapterError::WrongRoot);
+    }
+    if witness.secret.tx.input.0.b.to_num() == Num::ZERO {
+        return Err(AdapterError::UnfundedInput);
+    }
+    let mut fixed = [0u8; 36];
+    fixed[..8].copy_from_slice(&witness.fee.to_be_bytes());
+    fixed[16..].copy_from_slice(&witness.recipient);
+    finalize_signed_transaction(
+        witness.public,
+        witness.secret,
+        witness.signing_key,
+        witness.pool_id,
+        witness.proxy,
+        TransactionKind::Withdraw,
+        &fixed,
+    )
+}
+
+fn finalize_signed_transaction(
+    mut public: TransferPub<Fr>,
+    mut secret: TransferSec<Fr>,
+    signing_key: Num<Fs>,
+    pool_id: u32,
+    proxy: [u8; 20],
+    kind: TransactionKind,
+    fixed_fields: &[u8],
+) -> Result<FinalizedTransaction, AdapterError> {
+    if pool_id == 0 || pool_id >= (1 << constants::POOLID_SIZE_BITS) {
+        return Err(AdapterError::InvalidPoolId);
+    }
+    let params = &*POOL_PARAMS;
+    let a = derive_key_a(signing_key, params);
+    if a.x == Num::ZERO || a.x != secret.eddsa_a {
         return Err(AdapterError::WrongSigningKey);
     }
     let eta = derive_key_eta(a.x, params);
@@ -116,63 +255,76 @@ pub fn finalize_deposit(mut witness: DepositWitness) -> Result<FinalizedDeposit,
         return Err(AdapterError::WrongSigningKey);
     }
 
-    let out_account = witness.secret.tx.output.0;
+    let out_account = secret.tx.output.0;
     let mut encryption_entropy = Zeroizing::new([0u8; 32]);
     getrandom::getrandom(&mut *encryption_entropy)
         .map_err(|_| AdapterError::RandomnessUnavailable)?;
-    let raw_ciphertext = cipher::encrypt(&*encryption_entropy, eta, out_account, &[], params);
-    let memo = build_memo(
-        TransactionKind::Deposit,
-        &witness.fee.to_be_bytes(),
-        &raw_ciphertext,
-        &witness.proxy,
-    )
-    .map_err(AdapterError::Domain)?;
+    let mut note_outputs = Vec::new();
+    let mut saw_empty_note = false;
+    for note in secret.tx.output.1.iter() {
+        let is_empty = note.d.to_num() == Num::ZERO
+            && note.p_d == Num::ZERO
+            && note.b.to_num() == Num::ZERO
+            && note.t.to_num() == Num::ZERO;
+        if is_empty {
+            saw_empty_note = true;
+        } else {
+            if saw_empty_note {
+                return Err(AdapterError::OutputNoteGap);
+            }
+            note_outputs.push(*note);
+        }
+    }
+    if note_outputs.iter().any(|note| {
+        note.p_d == Num::ZERO
+            || EdwardsPoint::subgroup_decompress(note.p_d, params.jubjub()).is_none()
+    }) {
+        return Err(AdapterError::InvalidOutputNoteRecipient);
+    }
+    let raw_ciphertext = cipher::encrypt(
+        &*encryption_entropy,
+        eta,
+        out_account,
+        &note_outputs,
+        params,
+    );
+    let memo =
+        build_memo(kind, fixed_fields, &raw_ciphertext, &proxy).map_err(AdapterError::Domain)?;
     let memo_hash = Keccak256::digest(&memo);
     let memo_field = Num::<Fr>::from_uint_reduced(NumRepr(Uint::from_big_endian(&memo_hash)));
-    witness.public.memo = memo_field;
+    public.memo = memo_field;
 
-    let in_account_hash = witness.secret.tx.input.0.hash(params);
+    let in_account_hash = secret.tx.input.0.hash(params);
     let mut input_hashes = Vec::with_capacity(constants::IN + 1);
     input_hashes.push(in_account_hash);
-    input_hashes.extend(
-        witness
-            .secret
-            .tx
-            .input
-            .1
-            .iter()
-            .map(|note| note.hash(params)),
-    );
+    input_hashes.extend(secret.tx.input.1.iter().map(|note| note.hash(params)));
 
     let mut output_hashes = Vec::with_capacity(constants::OUT + 1);
     output_hashes.push(out_account.hash(params));
-    output_hashes.extend(
-        witness
-            .secret
-            .tx
-            .output
-            .1
-            .iter()
-            .map(|note| note.hash(params)),
-    );
+    output_hashes.extend(secret.tx.output.1.iter().map(|note| note.hash(params)));
     let out_commit = out_commitment_hash(&output_hashes, params);
-    if out_commit != witness.public.out_commit {
+    if out_commit != public.out_commit {
         return Err(AdapterError::WrongOutputCommitment);
     }
 
-    let signing_message = tx_hash(&input_hashes, out_commit, memo_field, pool_id, params);
-    let (s, r) = tx_sign(witness.signing_key, signing_message, params);
+    let signing_message = tx_hash(
+        &input_hashes,
+        out_commit,
+        memo_field,
+        Num::from(pool_id),
+        params,
+    );
+    let (s, r) = tx_sign(signing_key, signing_message, params);
     if !tx_verify(s, r, a.x, signing_message, params) {
         return Err(AdapterError::InvalidSignature);
     }
-    witness.secret.eddsa_s = s.to_other().expect("subgroup scalar fits SNARK field");
-    witness.secret.eddsa_r = r;
+    secret.eddsa_s = s.to_other().expect("subgroup scalar fits SNARK field");
+    secret.eddsa_r = r;
 
-    Ok(FinalizedDeposit {
-        public: witness.public,
+    Ok(FinalizedTransaction {
+        public,
         memo,
-        secret: witness.secret,
+        secret,
     })
 }
 
@@ -189,12 +341,31 @@ pub fn prove_deposit_with_unchecked_key(
         &finalized.secret,
         |public, secret| c_transfer(&public, &secret, &*POOL_PARAMS),
     );
-    Ok(DepositProof {
+    Ok(TransactionProof {
         public: finalized.public,
         memo: finalized.memo,
         public_inputs,
         proof,
     })
+}
+
+/// Unsafe key entry point for offline transfer/withdrawal rehearsal only.
+pub fn prove_finalized_with_unchecked_key(
+    parameters: &Parameters<Bn256>,
+    finalized: FinalizedTransaction,
+) -> TransactionProof {
+    let (public_inputs, proof) = prove(
+        parameters,
+        &finalized.public,
+        &finalized.secret,
+        |public, secret| c_transfer(&public, &secret, &*POOL_PARAMS),
+    );
+    TransactionProof {
+        public: finalized.public,
+        memo: finalized.memo,
+        public_inputs,
+        proof,
+    }
 }
 
 #[cfg(test)]
@@ -419,6 +590,128 @@ mod tests {
         assert!(matches!(
             finalize_deposit(value),
             Err(AdapterError::InvalidDepositAmount)
+        ));
+    }
+
+    #[test]
+    fn private_and_withdrawal_adapters_reject_wrong_delta_and_unfunded_account() {
+        let deposit = witness();
+        let mut value = PrivateTransferWitness {
+            public: deposit.public,
+            secret: deposit.secret,
+            signing_key: deposit.signing_key,
+            pool_id: deposit.pool_id,
+            fee: 0,
+            proxy: deposit.proxy,
+        };
+        assert!(matches!(
+            finalize_private_transfer(PrivateTransferWitness {
+                public: value.public.clone(),
+                secret: value.secret.clone(),
+                ..value
+            }),
+            Err(AdapterError::WrongDelta)
+        ));
+        value.public.delta =
+            make_delta(Num::ZERO, Num::ZERO, Num::from(128u64), Num::from(POOL_ID));
+        assert!(matches!(
+            finalize_private_transfer(PrivateTransferWitness {
+                public: value.public.clone(),
+                secret: value.secret.clone(),
+                ..value
+            }),
+            Err(AdapterError::WrongRoot)
+        ));
+        value.public.root = Num::ONE;
+        assert!(matches!(
+            finalize_private_transfer(PrivateTransferWitness {
+                public: value.public.clone(),
+                secret: value.secret.clone(),
+                ..value
+            }),
+            Err(AdapterError::UnfundedInput)
+        ));
+        value.fee = 1;
+        assert!(matches!(
+            finalize_private_transfer(value),
+            Err(AdapterError::WrongDelta)
+        ));
+
+        let deposit = witness();
+        let mut withdrawal = WithdrawalWitness {
+            public: deposit.public,
+            secret: deposit.secret,
+            signing_key: deposit.signing_key,
+            pool_id: deposit.pool_id,
+            amount: 5,
+            fee: 0,
+            recipient: [0x11; 20],
+            proxy: deposit.proxy,
+        };
+        assert!(matches!(
+            finalize_withdrawal(WithdrawalWitness {
+                public: withdrawal.public.clone(),
+                secret: withdrawal.secret.clone(),
+                ..withdrawal
+            }),
+            Err(AdapterError::WrongDelta)
+        ));
+        withdrawal.public.delta = make_delta(
+            -Num::from(5u64),
+            Num::ZERO,
+            Num::from(128u64),
+            Num::from(POOL_ID),
+        );
+        assert!(matches!(
+            finalize_withdrawal(WithdrawalWitness {
+                public: withdrawal.public.clone(),
+                secret: withdrawal.secret.clone(),
+                ..withdrawal
+            }),
+            Err(AdapterError::WrongRoot)
+        ));
+        withdrawal.public.root = Num::ONE;
+        assert!(matches!(
+            finalize_withdrawal(WithdrawalWitness {
+                public: withdrawal.public.clone(),
+                secret: withdrawal.secret.clone(),
+                ..withdrawal
+            }),
+            Err(AdapterError::UnfundedInput)
+        ));
+        withdrawal.fee = withdrawal.amount;
+        assert!(matches!(
+            finalize_withdrawal(withdrawal),
+            Err(AdapterError::InvalidWithdrawalAmount)
+        ));
+
+        let deposit = witness();
+        let mut private = PrivateTransferWitness {
+            public: deposit.public,
+            secret: deposit.secret,
+            signing_key: deposit.signing_key,
+            pool_id: deposit.pool_id,
+            fee: 0,
+            proxy: deposit.proxy,
+        };
+        private.public.root = Num::ONE;
+        private.public.delta =
+            make_delta(Num::ZERO, Num::ZERO, Num::from(128u64), Num::from(POOL_ID));
+        private.secret.tx.input.0.b = BoundedNum::new(Num::from(5u64));
+        private.secret.tx.output.1[1].b = BoundedNum::new(Num::ONE);
+        assert!(matches!(
+            finalize_private_transfer(PrivateTransferWitness {
+                public: private.public.clone(),
+                secret: private.secret.clone(),
+                ..private
+            }),
+            Err(AdapterError::OutputNoteGap)
+        ));
+        private.secret.tx.output.1[1] = zero_note();
+        private.secret.tx.output.1[0].b = BoundedNum::new(Num::ONE);
+        assert!(matches!(
+            finalize_private_transfer(private),
+            Err(AdapterError::InvalidOutputNoteRecipient)
         ));
     }
 

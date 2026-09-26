@@ -1,38 +1,31 @@
-# WTLOS PR7 deposit adapter — local draft, HOLD
+# WTLOS PR7 proof adapter — offline draft, HOLD
 
-This is an opt-in Rust package for the fresh WTLOS-only V1 pool. It has no
-WASM/JS export, wallet dispatch, relayer submission, RPC call, or deployed
-configuration. The existing wallet's `libzkbob-rs` and its embedded
-`libzeropool-zkbob` 1.4.0 history APIs remain unchanged.
+This opt-in Rust package finalizes PR7-native witnesses for a fresh WTLOS-only
+V1 pool. It handles deposit, funded private transfer, and WTLOS withdrawal
+memos. It is separate from the wallet's 1.4.0 history code and is **not**
+connected to a wallet, relayer, RPC, or deployed pool.
 
-The adjacent `packages/libzeropool-pr7` directory is an **unmodified 77-file
-Git archive** of Telos Privacy circuits tree
-`7a22196e1d4a791b452a6140bdfa915298f3f1da`. The local commit used for the
-archive is `78b50d55ece7d60aa6aeb536b2b0e78739bba5ac`; a prior GitHub
-readback recorded published PR #7 head
-`2cf3102d02ab1e9efe23090e3541e8f09cece97c` with the same tree. The
-adapter's locked dependency graph records the transitive Git revisions. We
-used a vendored exact tree because this machine cannot currently authenticate
-Git access to the Telos repository; no PR7 source file was edited. The
-source-matched transfer identity is
-`01ae02544199f79fcc21e2ddfd1f3bb1a35d680979cceec59e764fb3671be2b0`
-with R1CS SHA-256
-`6051176b4238978fc60d214db4b2755762b54b090ae4300e88b3e7371c27ce37`.
+`packages/libzeropool-pr7` is the exact unmodified circuit source tree
+`7a22196e1d4a791b452a6140bdfa915298f3f1da` from draft circuits PR #7.
+The adapter finalizes the full `TPD1 || proxy` memo, hashes its exact calldata
+bytes to the PR7 field element, and signs the PR7 transaction hash only after
+memo and pool ID are fixed. Private transfer outputs may include a contiguous
+prefix of funded notes; their recipient points are validated before encryption.
+Withdrawal leaves the native conversion field zero and puts the WTLOS recipient
+at the V1 fixed-field offset. The PR7 circuit remains responsible for
+account/note membership, ownership, balances, and tree paths.
 
-`finalize_deposit` accepts a **PR7-native witness** from a future wallet
-builder. It checks the nonzero 24-bit pool ID, positive signed deposit delta,
-zero output notes, and output commitment; encrypts the output account using
-PR7's cipher and OS randomness; inserts `TPD1 || proxy` after the V1 item
-count; builds the eight-byte-fee memo; reduces `keccak256(exact memo)` into the
-field; and only then signs PR7's Poseidon hash over input hashes, output
-commitment, memo field, and pool ID. `prove_deposit_with_unchecked_key` calls the **PR7**
-`c_transfer` prover on those finalized values. PR21's WTLOS-only contract
-hashes those same memo bytes and requires the embedded proxy address to equal
-its own address. `amount` and `fee` are pool units; the contract converts the
-net delta plus fee (equal to `amount`) to WTLOS base units at `10^9` base
-units per pool unit.
+The `prove_*_with_unchecked_key` entry points intentionally accept an
+unauthenticated prover object and are for offline work only. The ignored
+`unsafe_current_stagezero_funded_flow_proof` test decrypts a previously sealed
+first deposit memo, reconstructs its funded account and commitment, then
+generates real transfer and withdrawal Groth16 proofs plus tree append proofs.
+It checks both Stage 0 files by SHA-256 and both parsed verifier keys against
+the pinned JSON, verifies each proof, and writes public-only JSON. The local
+PR21 harness accepts the three-operation proof sequence and rejects changed
+memo/proof bytes, nullifier replays, and same-ID second-proxy reuse.
 
-Run from the wallet worktree:
+Run ordinary tests with:
 
 ```sh
 CARGO_TARGET_DIR=/private/tmp/telos-pr7-tree-guard-20260925/target \
@@ -40,18 +33,13 @@ CARGO_TARGET_DIR=/private/tmp/telos-pr7-tree-guard-20260925/target \
   --manifest-path packages/wtlos-pr7-proof/Cargo.toml --lib
 ```
 
-Ten tests pass. The strongest test constructs a synthetic initial deposit,
-finalizes it, and checks its full PR7 transfer relation using `DebugCS`.
-Other tests check exact memo layout, signature sensitivity to memo/pool
-changes, and reject inconsistent fields. **No SNARK proof was generated, no
-proving key was qualified, and no real wallet deposit was constructed.**
+The ignored proof test additionally requires the sealed first-deposit proof,
+both exact Stage 0 MPC files and VK JSON paths, and a **new** output path via
+`UNSAFE_PR7_FIRST_DEPOSIT_PROOF`, `UNSAFE_PR7_STAGE0_TRANSFER`,
+`UNSAFE_PR7_STAGE0_TRANSFER_VK`, `UNSAFE_PR7_STAGE0_TREE`,
+`UNSAFE_PR7_STAGE0_TREE_VK`, and `UNSAFE_PR7_FUNDED_FLOW_OUT`. Run it with
+`cargo test ... unsafe_current_stagezero_funded_flow_proof -- --ignored --nocapture`.
 
-Before this can be a production client, a source-matched state/witness builder
-must replace the 1.4.0 transfer construction for this pool while retaining the
-old history route. The prover must load a final, independently qualified PR7
-key and check its identity; a matching tree-update proof, EVM deposit-spender
-signature, exact custom calldata serialization, relayer parser/domain checks,
-WTLOS denomination and pool configuration, and full offline integration
-vectors are still required. The proof entrypoint's argument is an unchecked
-`Parameters` object today, so this function must not be wired to a live
-wallet. Production release remains **HOLD / NO-GO**.
+Stage 0 has **zero independent Phase 2 contributions**. This package does not
+qualify the keys, bind a final deployed verifier, supply a live wallet route,
+or establish whole-system formal verification. Production release is HOLD.
