@@ -720,7 +720,18 @@ fn unsafe_current_stagezero_recipient_note_spend() {
         "6fa8054b88077e4f531eb3e7fcf094ea9e2746672ea2788f816b2c4a13f3e68f";
     const PRIOR_FUNDED_HASH: &str =
         "9d8fe1ee19caec796c8f94c77d224a1d646c62d0b6a8e682d32815511bf0e2c7";
+    const PRIOR_FEE_HASH: &str = "b617fd663916be298bd65738bea0d52143806642656527d2d5031658c69d3426";
     const DEPOSIT_HASH: &str = "e5f938e84ef9bfa22275e7d996c5d911a6b8750e0963c281149545e728e24107";
+    let fee_prior_path = std::env::var("UNSAFE_PR7_NONZERO_FEE_PROOFS").ok();
+    let fee_mode = fee_prior_path.is_some();
+    let prior_hash = if fee_mode {
+        PRIOR_FEE_HASH
+    } else {
+        PRIOR_FUNDED_HASH
+    };
+    let transfer_fee = if fee_mode { 1u64 } else { 0 };
+    let withdrawal_fee = if fee_mode { 2u64 } else { 0 };
+    let sender_balance = HALF - transfer_fee;
 
     let deposit_bytes = std::fs::read(
         std::env::var("UNSAFE_PR7_FIRST_DEPOSIT_PROOF").expect("sealed first deposit path"),
@@ -766,15 +777,19 @@ fn unsafe_current_stagezero_recipient_note_spend() {
     let (first_tree, _) = state.append_witness(first_inputs[2]);
     assert_eq!(first_tree.root_after, first_tree_inputs[1]);
 
-    let prior_bytes = std::fs::read(
-        std::env::var("UNSAFE_PR7_FUNDED_PROOFS").expect("sealed funded-flow proof path"),
-    )
-    .unwrap();
-    assert_eq!(hex::encode(Sha256::digest(&prior_bytes)), PRIOR_FUNDED_HASH);
+    let prior_path = fee_prior_path.unwrap_or_else(|| {
+        std::env::var("UNSAFE_PR7_FUNDED_PROOFS").expect("sealed funded-flow proof path")
+    });
+    let prior_bytes = std::fs::read(prior_path).unwrap();
+    assert_eq!(hex::encode(Sha256::digest(&prior_bytes)), prior_hash);
     let prior: serde_json::Value = serde_json::from_slice(&prior_bytes).unwrap();
     assert_eq!(
         prior["schema"],
-        "telos-pr7-wallet-adapter-unsafe-funded-flow-v1"
+        if fee_mode {
+            "telos-pr7-wallet-adapter-unsafe-nonzero-fee-flow-v1"
+        } else {
+            "telos-pr7-wallet-adapter-unsafe-funded-flow-v1"
+        }
     );
     assert_eq!(prior["sourceTree"], SOURCE_TREE);
     assert_eq!(prior["firstDepositProofSha256"], DEPOSIT_HASH);
@@ -803,6 +818,7 @@ fn unsafe_current_stagezero_recipient_note_spend() {
             .trim_start_matches("0x"),
     )
     .unwrap();
+    assert_eq!(&transfer_memo[..8], &transfer_fee.to_be_bytes());
     let transfer_raw = domain::strip_domain(&transfer_memo[8..], &proxy()).unwrap();
     let receiver_incoming = cipher::decrypt_in(recipient_eta, &transfer_raw, &*POOL_PARAMS);
     assert_eq!(
@@ -820,6 +836,11 @@ fn unsafe_current_stagezero_recipient_note_spend() {
     let (sender_outgoing_account, sender_outgoing_notes) =
         cipher::decrypt_out(sender_eta, &transfer_raw, &*POOL_PARAMS).unwrap();
     assert_eq!(sender_outgoing_notes, vec![recipient_note]);
+    assert_eq!(
+        sender_outgoing_account.b.to_num(),
+        Num::from(sender_balance)
+    );
+    assert_eq!(sender_outgoing_account.e.to_num(), Num::from(128 * BALANCE));
 
     let transfer_inputs = prior_operations[0]["publicInputs"]
         .as_array()
@@ -834,6 +855,15 @@ fn unsafe_current_stagezero_recipient_note_spend() {
         .map(parse_num)
         .collect::<Vec<_>>();
     assert_eq!(transfer_inputs[0], state.root());
+    assert_eq!(
+        transfer_inputs[3],
+        make_delta(
+            -Num::from(transfer_fee),
+            Num::ZERO,
+            Num::from(128u64),
+            Num::from(POOL_ID),
+        )
+    );
     assert_eq!(
         transfer_inputs[4],
         Num::<Fr>::from_uint_reduced(NumRepr(Uint::from_big_endian(&Keccak256::digest(
@@ -856,7 +886,7 @@ fn unsafe_current_stagezero_recipient_note_spend() {
         p_d: derive_key_p_d(sender_final_d.to_num(), sender_eta, &*POOL_PARAMS).x,
         i: BoundedNum::new(Num::from(256u64)),
         b: BoundedNum::ZERO,
-        e: BoundedNum::new(Num::from(192 * BALANCE)),
+        e: BoundedNum::new(Num::from(128 * BALANCE + 128 * sender_balance)),
     };
     let final_hashes = output_hashes(sender_final, &zero_notes);
     let sender_withdraw_inputs = prior_operations[1]["publicInputs"]
@@ -871,7 +901,30 @@ fn unsafe_current_stagezero_recipient_note_spend() {
         .iter()
         .map(parse_num)
         .collect::<Vec<_>>();
+    let sender_withdraw_memo = hex::decode(
+        prior_operations[1]["memoDataHex"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("0x"),
+    )
+    .unwrap();
+    assert_eq!(&sender_withdraw_memo[..8], &withdrawal_fee.to_be_bytes());
     assert_eq!(sender_withdraw_inputs[0], state.root());
+    assert_eq!(
+        sender_withdraw_inputs[3],
+        make_delta(
+            -Num::from(sender_balance),
+            Num::ZERO,
+            Num::from(256u64),
+            Num::from(POOL_ID),
+        )
+    );
+    assert_eq!(
+        sender_withdraw_inputs[4],
+        Num::<Fr>::from_uint_reduced(NumRepr(Uint::from_big_endian(&Keccak256::digest(
+            &sender_withdraw_memo
+        ))))
+    );
     assert_eq!(
         sender_withdraw_inputs[2],
         out_commitment_hash(&final_hashes, &*POOL_PARAMS)
@@ -1000,14 +1053,20 @@ fn unsafe_current_stagezero_recipient_note_spend() {
     assert_eq!(tree_inputs[2], result.public_inputs[2]);
 
     let output = serde_json::json!({
-        "schema": "telos-pr7-wallet-adapter-unsafe-recipient-spend-v1",
+        "schema": if fee_mode {
+            "telos-pr7-wallet-adapter-unsafe-fee-recipient-spend-v1"
+        } else {
+            "telos-pr7-wallet-adapter-unsafe-recipient-spend-v1"
+        },
         "testOnly": true,
         "unsafeZeroContribution": true,
         "sourceTree": SOURCE_TREE,
         "transferStage0Sha256": TRANSFER_STAGE_HASH,
         "treeStage0Sha256": TREE_STAGE_HASH,
         "firstDepositProofSha256": DEPOSIT_HASH,
-        "previousFundedProofSha256": PRIOR_FUNDED_HASH,
+        "previousFundedProofSha256": prior_hash,
+        "priorTransferFeeZkUnits": transfer_fee,
+        "priorWithdrawalFeeZkUnits": withdrawal_fee,
         "poolId": POOL_ID,
         "poolAddress": "0x000000000000000000000000000000000000F003",
         "notePosition": 129,
@@ -1026,8 +1085,12 @@ fn unsafe_current_stagezero_recipient_note_spend() {
         },
         "verifiedAgainstSealedStage0Vk": true,
     });
-    let out_path =
-        std::env::var("UNSAFE_PR7_RECIPIENT_SPEND_OUT").expect("new recipient spend output path");
+    let out_path = if fee_mode {
+        std::env::var("UNSAFE_PR7_FEE_RECIPIENT_SPEND_OUT")
+            .expect("new fee-flow recipient-spend output path")
+    } else {
+        std::env::var("UNSAFE_PR7_RECIPIENT_SPEND_OUT").expect("new recipient spend output path")
+    };
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
