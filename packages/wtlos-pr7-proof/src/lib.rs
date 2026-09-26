@@ -226,12 +226,19 @@ mod tests {
         }
     }
 
-    fn witness() -> DepositWitness {
+    fn witness_for(
+        pool_id: u32,
+        proxy: [u8; 20],
+        root: Num<Fr>,
+        balance: u64,
+        fee: u64,
+        index: u64,
+    ) -> DepositWitness {
         let params = &*POOL_PARAMS;
         let signing_key = Num::<Fs>::from(23u64);
         let a = derive_key_a(signing_key, params);
         let eta = derive_key_eta(a.x, params);
-        let input_d = BoundedNum::new(Num::<Fr>::from(POOL_ID));
+        let input_d = BoundedNum::new(Num::<Fr>::from(pool_id));
         let input_p_d = derive_key_p_d(input_d.to_num(), eta, params).x;
         let input_account = Account {
             d: input_d,
@@ -244,8 +251,8 @@ mod tests {
         let output_account = Account {
             d: output_d,
             p_d: derive_key_p_d(output_d.to_num(), eta, params).x,
-            i: BoundedNum::new(Num::from(128u64)),
-            b: BoundedNum::new(Num::from(5u64)),
+            i: BoundedNum::new(Num::from(index)),
+            b: BoundedNum::new(Num::from(balance)),
             ..input_account
         };
         let input_notes: SizedVec<_, { constants::IN }> = (0..constants::IN)
@@ -264,10 +271,10 @@ mod tests {
         let mut output_hashes = vec![output_account.hash(params)];
         output_hashes.extend(output_notes.iter().map(|note| note.hash(params)));
         let out_commit = out_commitment_hash(&output_hashes, params);
-        let pool_id = Num::from(POOL_ID);
+        let encoded_pool_id = Num::from(pool_id);
         DepositWitness {
             public: TransferPub {
-                root: Num::ZERO,
+                root,
                 nullifier: libzeropool_pr7::native::tx::nullifier(
                     input_account.hash(params),
                     eta,
@@ -275,7 +282,12 @@ mod tests {
                     params,
                 ),
                 out_commit,
-                delta: make_delta(Num::from(5u64), Num::ZERO, Num::from(128u64), pool_id),
+                delta: make_delta(
+                    Num::from(balance),
+                    Num::ZERO,
+                    Num::from(index),
+                    encoded_pool_id,
+                ),
                 memo: Num::ZERO,
             },
             secret: TransferSec {
@@ -292,11 +304,15 @@ mod tests {
                 eddsa_a: a.x,
             },
             signing_key,
-            pool_id: POOL_ID,
-            amount: 12,
-            fee: 7,
-            proxy: PROXY,
+            pool_id,
+            amount: balance + fee,
+            fee,
+            proxy,
         }
+    }
+
+    fn witness() -> DepositWitness {
+        witness_for(POOL_ID, PROXY, Num::ZERO, 5, 7, 128)
     }
 
     #[test]
@@ -418,5 +434,242 @@ mod tests {
         let public = CTransferPub::alloc(&cs, Some(&finalized.public));
         let secret = CTransferSec::alloc(&cs, Some(&finalized.secret));
         c_transfer(&public, &secret, &*POOL_PARAMS);
+    }
+
+    /// Diagnostic only: zero-contribution Stage 0 has no ceremony security.
+    /// The environment paths must point at the sealed current PR7 fixture.
+    #[test]
+    #[ignore = "explicit opt-in unsafe Stage 0 proof; never use for production"]
+    fn unsafe_current_stagezero_deposit_proof() {
+        use fawkes_crypto_phase2::parameters::MPCParameters;
+        use libzeropool_pr7::{
+            circuit::{
+                tree::{tree_update, CTreePub, CTreeSec},
+                tx::{CTransferPub, CTransferSec},
+            },
+            fawkes_crypto::{
+                backend::bellman_groth16::{verifier::verify, Parameters},
+                circuit::cs::BuildCS,
+                core::signal::Signal,
+                native::poseidon::{poseidon, poseidon_merkle_proof_root},
+                BorshSerialize,
+            },
+            native::{
+                params::PoolParams,
+                tree::{TreePub, TreeSec},
+            },
+        };
+        use sha2::{Digest as _, Sha256};
+        use std::io::{Read, Write};
+
+        let stage_path =
+            std::env::var("UNSAFE_PR7_STAGE0_TRANSFER").expect("Stage 0 path required");
+        let vk_path =
+            std::env::var("UNSAFE_PR7_STAGE0_TRANSFER_VK").expect("sealed VK path required");
+        let tree_stage_path =
+            std::env::var("UNSAFE_PR7_STAGE0_TREE").expect("Stage 0 tree path required");
+        let tree_vk_path =
+            std::env::var("UNSAFE_PR7_STAGE0_TREE_VK").expect("sealed tree VK path required");
+        let out_path =
+            std::env::var("UNSAFE_PR7_PROOF_OUT").expect("new proof output path required");
+
+        let mut stage = std::fs::File::open(&stage_path).unwrap();
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut stage, &mut hasher).unwrap();
+        assert_eq!(
+            hex::encode(hasher.finalize()),
+            "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7843ba30",
+            "Stage 0 transcript differs from sealed current-source fixture"
+        );
+        let mut stage = std::fs::File::open(&stage_path).unwrap();
+        let mpc = MPCParameters::read(&mut stage, true, true).unwrap();
+        let mut trailing = [0u8; 1];
+        assert_eq!(
+            stage.read(&mut trailing).unwrap(),
+            0,
+            "trailing Stage 0 bytes"
+        );
+
+        // Recreate the same Fawkes gate compression and constant tracker as
+        // PR7's ceremony finalizer, without writing an unsafe proving key.
+        let cs = BuildCS::<Fr>::rc_new();
+        let public = CTransferPub::alloc(&cs, None);
+        public.inputize();
+        let secret = CTransferSec::alloc(&cs, None);
+        c_transfer(&public, &secret, &*POOL_PARAMS);
+        let cs = cs.borrow();
+        let mut compressed = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut compressed, 4096, 9, 22);
+            for gate in &cs.gates {
+                writer.write_all(&gate.try_to_vec().unwrap()).unwrap();
+            }
+            writer.flush().unwrap();
+        }
+        let parameters = Parameters::<Bn256>(
+            mpc.get_params().clone(),
+            cs.gates.len() as u32,
+            compressed,
+            cs.const_tracker.clone(),
+        );
+        drop(cs);
+        let vk = parameters.get_vk();
+        let expected_vk: serde_json::Value =
+            serde_json::from_reader(std::fs::File::open(vk_path).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&vk).unwrap(),
+            expected_vk,
+            "Stage 0 VK mismatch"
+        );
+
+        let mut empty_root = Num::<Fr>::ZERO;
+        for _ in 0..constants::HEIGHT {
+            empty_root = poseidon(&[empty_root, empty_root], POOL_PARAMS.compress());
+        }
+        assert_eq!(
+            empty_root.to_string(),
+            "11469701942666298368112882412133877458305516134926649826543144744382391691533"
+        );
+        let mut proxy = [0u8; 20];
+        proxy[18] = 0xf0;
+        proxy[19] = 0x03;
+        let result = prove_deposit_with_unchecked_key(
+            &parameters,
+            witness_for(40003, proxy, empty_root, 1_000_000_000, 0, 0),
+        )
+        .unwrap();
+        assert_eq!(result.public_inputs.len(), 5);
+        assert_eq!(result.public_inputs[0], empty_root);
+        assert_eq!(result.public_inputs[4], result.public.memo);
+        assert!(
+            verify(&vk, &result.proof, &result.public_inputs),
+            "Stage 0 proof rejected"
+        );
+
+        // Prove the append of this adapter-produced output commitment. This
+        // supplies PR21's second proof without inventing a tree root.
+        let mut defaults = vec![Num::<Fr>::ZERO];
+        for _ in 0..constants::HEIGHT {
+            let before = *defaults.last().unwrap();
+            defaults.push(poseidon(&[before, before], POOL_PARAMS.compress()));
+        }
+        let empty_leaf = defaults[constants::OUTPLUSONELOG];
+        let tree_path: MerkleProof<Fr, { constants::HEIGHT - constants::OUTPLUSONELOG }> =
+            MerkleProof {
+                sibling: (constants::OUTPLUSONELOG..constants::HEIGHT)
+                    .map(|i| defaults[i])
+                    .collect(),
+                path: (constants::OUTPLUSONELOG..constants::HEIGHT)
+                    .map(|_| false)
+                    .collect(),
+            };
+        assert_eq!(
+            poseidon_merkle_proof_root(empty_leaf, &tree_path, POOL_PARAMS.compress()),
+            empty_root
+        );
+        let next_root = poseidon_merkle_proof_root(
+            result.public.out_commit,
+            &tree_path,
+            POOL_PARAMS.compress(),
+        );
+        assert_ne!(next_root, empty_root);
+        let tree_public = TreePub {
+            root_before: empty_root,
+            root_after: next_root,
+            leaf: result.public.out_commit,
+        };
+        let tree_secret = TreeSec {
+            proof_filled: tree_path.clone(),
+            proof_free: tree_path,
+            prev_leaf: empty_leaf,
+        };
+
+        let mut tree_stage = std::fs::File::open(&tree_stage_path).unwrap();
+        let mut tree_hasher = Sha256::new();
+        std::io::copy(&mut tree_stage, &mut tree_hasher).unwrap();
+        assert_eq!(
+            hex::encode(tree_hasher.finalize()),
+            "6fa8054b88077e4f531eb3e7fcf094ea9e2746672ea2788f816b2c4a13f3e68f"
+        );
+        let mut tree_stage = std::fs::File::open(&tree_stage_path).unwrap();
+        let tree_mpc = MPCParameters::read(&mut tree_stage, true, true).unwrap();
+        assert_eq!(
+            tree_stage.read(&mut trailing).unwrap(),
+            0,
+            "trailing tree Stage 0 bytes"
+        );
+        let tree_cs = BuildCS::<Fr>::rc_new();
+        let tree_pub_signal = CTreePub::alloc(&tree_cs, None);
+        tree_pub_signal.inputize();
+        let tree_sec_signal = CTreeSec::alloc(&tree_cs, None);
+        tree_update(&tree_pub_signal, &tree_sec_signal, &*POOL_PARAMS);
+        let tree_cs = tree_cs.borrow();
+        let mut tree_compressed = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut tree_compressed, 4096, 9, 22);
+            for gate in &tree_cs.gates {
+                writer.write_all(&gate.try_to_vec().unwrap()).unwrap();
+            }
+            writer.flush().unwrap();
+        }
+        let tree_parameters = Parameters::<Bn256>(
+            tree_mpc.get_params().clone(),
+            tree_cs.gates.len() as u32,
+            tree_compressed,
+            tree_cs.const_tracker.clone(),
+        );
+        drop(tree_cs);
+        let tree_vk = tree_parameters.get_vk();
+        let expected_tree_vk: serde_json::Value =
+            serde_json::from_reader(std::fs::File::open(tree_vk_path).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&tree_vk).unwrap(),
+            expected_tree_vk,
+            "tree Stage 0 VK mismatch"
+        );
+        let (tree_inputs, tree_proof) = prove(
+            &tree_parameters,
+            &tree_public,
+            &tree_secret,
+            |public, secret| tree_update(&public, &secret, &*POOL_PARAMS),
+        );
+        assert_eq!(tree_inputs.len(), 3);
+        assert_eq!(tree_inputs[0], empty_root);
+        assert_eq!(tree_inputs[1], next_root);
+        assert_eq!(tree_inputs[2], result.public.out_commit);
+        assert!(
+            verify(&tree_vk, &tree_proof, &tree_inputs),
+            "tree Stage 0 proof rejected"
+        );
+
+        let output = serde_json::json!({
+            "schema": "telos-pr7-wallet-adapter-unsafe-deposit-proof-v1",
+            "testOnly": true,
+            "unsafeZeroContribution": true,
+            "sourceTree": SOURCE_TREE,
+            "stage0Sha256": "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7843ba30",
+            "poolId": 40003,
+            "poolAddress": "0x000000000000000000000000000000000000F003",
+            "depositZkUnits": 1_000_000_000u64,
+            "feeZkUnits": 0,
+            "memoDataHex": format!("0x{}", hex::encode(&result.memo)),
+            "publicInputs": result.public_inputs.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            "proof": result.proof,
+            "verifiedAgainstSealedStage0Vk": true,
+            "treeUpdate": {
+                "stage0Sha256": "6fa8054b88077e4f531eb3e7fcf094ea9e2746672ea2788f816b2c4a13f3e68f",
+                "publicInputs": tree_inputs.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "proof": tree_proof,
+                "verifiedAgainstSealedStage0Vk": true
+            }
+        });
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(out_path)
+            .unwrap();
+        serde_json::to_writer_pretty(&mut file, &output).unwrap();
+        file.write_all(b"\n").unwrap();
+        file.sync_all().unwrap();
     }
 }
