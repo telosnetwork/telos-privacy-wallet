@@ -356,6 +356,12 @@ fn unsafe_current_stagezero_funded_flow_proof() {
         "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7843ba30";
     const TREE_STAGE_HASH: &str =
         "6fa8054b88077e4f531eb3e7fcf094ea9e2746672ea2788f816b2c4a13f3e68f";
+    // Opt-in fee vector reuses the exact source, first-deposit proof and Stage
+    // 0 keys. The default path remains the previously sealed zero-fee test.
+    let nonzero_output = std::env::var("UNSAFE_PR7_NONZERO_FEE_FLOW_OUT").ok();
+    let transfer_fee = if nonzero_output.is_some() { 1u64 } else { 0 };
+    let withdrawal_fee = if nonzero_output.is_some() { 2u64 } else { 0 };
+    let sender_balance = HALF - transfer_fee;
     let deposit_path =
         std::env::var("UNSAFE_PR7_FIRST_DEPOSIT_PROOF").expect("accepted deposit fixture required");
     let deposit_bytes = std::fs::read(deposit_path).unwrap();
@@ -471,7 +477,7 @@ fn unsafe_current_stagezero_funded_flow_proof() {
         d: next_d,
         p_d: derive_key_p_d(next_d.to_num(), eta, &*POOL_PARAMS).x,
         i: BoundedNum::new(Num::from(128u64)),
-        b: BoundedNum::new(Num::from(HALF)),
+        b: BoundedNum::new(Num::from(sender_balance)),
         e: BoundedNum::new(Num::from(128 * BALANCE)),
     };
     let second_hashes = output_hashes(second_account, &transfer_notes);
@@ -486,7 +492,12 @@ fn unsafe_current_stagezero_funded_flow_proof() {
                 &*POOL_PARAMS,
             ),
             out_commit: second_commit,
-            delta: make_delta(Num::ZERO, Num::ZERO, Num::from(128u64), Num::from(POOL_ID)),
+            delta: make_delta(
+                -Num::from(transfer_fee),
+                Num::ZERO,
+                Num::from(128u64),
+                Num::from(POOL_ID),
+            ),
             memo: Num::ZERO,
         },
         secret: signed_secret(
@@ -498,16 +509,26 @@ fn unsafe_current_stagezero_funded_flow_proof() {
         ),
         signing_key: signer,
         pool_id: POOL_ID,
-        fee: 0,
+        fee: transfer_fee,
         proxy: proxy(),
     };
     let finalized_transfer = finalize_private_transfer(transfer_witness).unwrap();
-    assert_eq!(&finalized_transfer.memo[..8], &[0u8; 8]);
+    assert_eq!(&finalized_transfer.memo[..8], &transfer_fee.to_be_bytes());
     let decrypted_transfer = domain::strip_domain(&finalized_transfer.memo[8..], &proxy()).unwrap();
     let (recovered_account, recovered_notes) =
         cipher::decrypt_out(eta, &decrypted_transfer, &*POOL_PARAMS).unwrap();
     assert_eq!(recovered_account, second_account);
     assert_eq!(recovered_notes, vec![recipient_note]);
+    assert_eq!(
+        cipher::decrypt_in(recipient_eta, &decrypted_transfer, &*POOL_PARAMS),
+        vec![Some(recipient_note)],
+        "the recipient key must decrypt the exact funded note"
+    );
+    assert_eq!(
+        cipher::decrypt_in(eta, &decrypted_transfer, &*POOL_PARAMS),
+        vec![None],
+        "the sender key must not decrypt the incoming recipient note"
+    );
     let cs = DebugCS::rc_new();
     let public = CTransferPub::alloc(&cs, Some(&finalized_transfer.public));
     let secret = CTransferSec::alloc(&cs, Some(&finalized_transfer.secret));
@@ -519,6 +540,15 @@ fn unsafe_current_stagezero_funded_flow_proof() {
         &transfer_result.proof,
         &transfer_result.public_inputs
     ));
+    assert_eq!(
+        transfer_result.public.delta,
+        make_delta(
+            -Num::from(transfer_fee),
+            Num::ZERO,
+            Num::from(128u64),
+            Num::from(POOL_ID),
+        )
+    );
     let (transfer_tree_pub, transfer_tree_sec) = state.append_witness(second_commit);
     let (transfer_tree_inputs, transfer_tree_proof) = prove(
         &tree_parameters,
@@ -541,7 +571,7 @@ fn unsafe_current_stagezero_funded_flow_proof() {
         p_d: derive_key_p_d(final_d.to_num(), eta, &*POOL_PARAMS).x,
         i: BoundedNum::new(Num::from(256u64)),
         b: BoundedNum::ZERO,
-        e: BoundedNum::new(Num::from(192 * BALANCE)),
+        e: BoundedNum::new(Num::from(128 * BALANCE + 128 * sender_balance)),
     };
     let final_notes: SizedVec<Note<Fr>, { constants::OUT }> =
         (0..constants::OUT).map(|_| zero_note()).collect();
@@ -559,7 +589,7 @@ fn unsafe_current_stagezero_funded_flow_proof() {
             ),
             out_commit: out_commitment_hash(&final_hashes, &*POOL_PARAMS),
             delta: make_delta(
-                -Num::from(HALF),
+                -Num::from(sender_balance),
                 Num::ZERO,
                 Num::from(256u64),
                 Num::from(POOL_ID),
@@ -575,13 +605,17 @@ fn unsafe_current_stagezero_funded_flow_proof() {
         ),
         signing_key: signer,
         pool_id: POOL_ID,
-        amount: HALF,
-        fee: 0,
+        amount: sender_balance,
+        fee: withdrawal_fee,
         recipient,
         proxy: proxy(),
     };
     let finalized_withdrawal = finalize_withdrawal(withdrawal_witness).unwrap();
-    assert_eq!(&finalized_withdrawal.memo[..16], &[0u8; 16]);
+    assert_eq!(
+        &finalized_withdrawal.memo[..8],
+        &withdrawal_fee.to_be_bytes()
+    );
+    assert_eq!(&finalized_withdrawal.memo[8..16], &[0u8; 8]);
     assert_eq!(&finalized_withdrawal.memo[16..36], &recipient);
     let cs = DebugCS::rc_new();
     let public = CTransferPub::alloc(&cs, Some(&finalized_withdrawal.public));
@@ -594,6 +628,15 @@ fn unsafe_current_stagezero_funded_flow_proof() {
         &withdrawal_result.proof,
         &withdrawal_result.public_inputs
     ));
+    assert_eq!(
+        withdrawal_result.public.delta,
+        make_delta(
+            -Num::from(sender_balance),
+            Num::ZERO,
+            Num::from(256u64),
+            Num::from(POOL_ID),
+        )
+    );
     let (withdraw_tree_pub, withdraw_tree_sec) =
         state.append_witness(withdrawal_result.public.out_commit);
     let (withdraw_tree_inputs, withdraw_tree_proof) = prove(
@@ -629,7 +672,11 @@ fn unsafe_current_stagezero_funded_flow_proof() {
         })
     };
     let output = serde_json::json!({
-        "schema": "telos-pr7-wallet-adapter-unsafe-funded-flow-v1",
+        "schema": if nonzero_output.is_some() {
+            "telos-pr7-wallet-adapter-unsafe-nonzero-fee-flow-v1"
+        } else {
+            "telos-pr7-wallet-adapter-unsafe-funded-flow-v1"
+        },
         "testOnly": true,
         "unsafeZeroContribution": true,
         "sourceTree": SOURCE_TREE,
@@ -639,13 +686,18 @@ fn unsafe_current_stagezero_funded_flow_proof() {
         "poolId": POOL_ID,
         "poolAddress": "0x000000000000000000000000000000000000F003",
         "recipient": "0x000000000000000000000000000000000000bEEF",
+        "transferFeeZkUnits": transfer_fee,
+        "withdrawalFeeZkUnits": withdrawal_fee,
+        "senderWithdrawalZkUnits": sender_balance,
+        "survivingRecipientNoteZkUnits": HALF,
         "operations": [
             operation("transfer", transfer_result, transfer_tree_inputs, transfer_tree_proof),
             operation("withdraw", withdrawal_result, withdraw_tree_inputs, withdraw_tree_proof),
         ],
     });
-    let out_path =
-        std::env::var("UNSAFE_PR7_FUNDED_FLOW_OUT").expect("new funded-flow output path required");
+    let out_path = nonzero_output.unwrap_or_else(|| {
+        std::env::var("UNSAFE_PR7_FUNDED_FLOW_OUT").expect("new funded-flow output path required")
+    });
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

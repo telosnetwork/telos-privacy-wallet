@@ -40,6 +40,14 @@ both exact Stage 0 MPC files and VK JSON paths, and a **new** output path via
 `UNSAFE_PR7_STAGE0_TREE_VK`, and `UNSAFE_PR7_FUNDED_FLOW_OUT`. Run it with
 `cargo test ... unsafe_current_stagezero_funded_flow_proof -- --ignored --nocapture`.
 
+For the independent nonzero-fee rehearsal, set
+`UNSAFE_PR7_NONZERO_FEE_FLOW_OUT` to a new output path instead of
+`UNSAFE_PR7_FUNDED_FLOW_OUT`. That opt-in vector charges one pool unit in the
+private transfer and two in the sender withdrawal. It keeps a 500,000,000-unit
+recipient note and checks recipient-key decryption, both DebugCS relations,
+and both Groth16 transfer/tree proofs against the pinned Stage 0 keys.
+The resulting JSON is unsafe test material, never a production proof package.
+
 Stage 0 has **zero independent Phase 2 contributions**. This package does not
 qualify the keys, bind a final deployed verifier, supply a live wallet route,
 or establish whole-system formal verification. Production release is HOLD.
