@@ -40,11 +40,11 @@ DISPATCH_GUARD_SHA256 = {
     "packages/zkbob-client-js/test/wtlos-pr7-prover-dispatch.test.cjs":
         "3f9b1eb2ae7e490b8b6563fdfc02dab53d4f80b2f53e03c8ff1fc4d926a5b3c0",
 }
-WTLOS_KEY_LOADER_SHA256 = {
+WTLOS_ARTIFACT_INSPECTION_SHA256 = {
     "packages/zkbob-client-js/src/params.ts":
-        "239b1c8d4e0ef9821741d9f32eb7e2b0dff09c29eb5ee2081b74cf33fd16b0a6",
-    "packages/zkbob-client-js/test/wtlos-browser-key-loader.test.cjs":
-        "b47c5d02234caea7f51ec9cdaf6b43a21352baab19e3a8b79a506e054b0d7c27",
+        "7c6679019f0085c2bd393a972c13b7ad4b9c35fe062c5040c5519226c67f8fec",
+    "packages/zkbob-client-js/test/wtlos-browser-artifact-inspection.test.cjs":
+        "6732f098ffe4cbe7245cfe34da1a775839a42554b58e2b9b0a9fd070d9ec5661",
 }
 WALLET_BRIDGE_SHA256 = {
     "packages/wtlos-pr7-proof/Cargo.toml":
@@ -103,7 +103,7 @@ def check_build_inputs() -> None:
     changed = changes("HEAD")
     expected = (browser_changes | wallet_changes | build_evidence_paths |
                 set(DISPATCH_GUARD_SHA256) | set(WALLET_BRIDGE_SHA256) |
-                set(WTLOS_KEY_LOADER_SHA256))
+                set(WTLOS_ARTIFACT_INSPECTION_SHA256))
     assert changed == expected, (
         f"composed source path set drift: extra={sorted(changed - expected)}, "
         f"missing={sorted(expected - changed)}"
@@ -117,14 +117,14 @@ def check_build_inputs() -> None:
                 f"PR76 browser source drift: {path}"
             )
     for path in wallet_changes:
-        if path not in DISPATCH_GUARD_SHA256 and path not in WTLOS_KEY_LOADER_SHA256:
+        if path not in DISPATCH_GUARD_SHA256 and path not in WTLOS_ARTIFACT_INSPECTION_SHA256:
             assert blob("HEAD", path) == blob(EXPECTED_WALLET_PROFILE_COMMIT, path), (
                 f"WTLOS wallet profile source drift: {path}"
             )
     for path, digest in DISPATCH_GUARD_SHA256.items():
         assert sha256(ROOT / path) == digest, f"WTLOS dispatch guard drift: {path}"
-    for path, digest in WTLOS_KEY_LOADER_SHA256.items():
-        assert sha256(ROOT / path) == digest, f"WTLOS PR7 key loader drift: {path}"
+    for path, digest in WTLOS_ARTIFACT_INSPECTION_SHA256.items():
+        assert sha256(ROOT / path) == digest, f"WTLOS artifact inspection drift: {path}"
     for path, digest in WALLET_BRIDGE_SHA256.items():
         assert sha256(ROOT / path) == digest, f"WTLOS offline wallet bridge drift: {path}"
 

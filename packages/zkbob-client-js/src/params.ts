@@ -4,8 +4,8 @@ import { SnarkConfigParams } from "./config";
 import sha256 from 'fast-sha256';
 
 const MAX_VK_LOAD_ATTEMPTS = 3;
-// Draft circuits PR8 identity. Any relation change needs new reviewed source,
-// ceremony, proving key, and VK pins before this loader can accept artifacts.
+// Draft circuits PR8 identity. These pins label an offline byte inspection;
+// they do not authenticate a browser module, key ceremony, or proof capability.
 export const WTLOS_CIRCUIT_SOURCE_TREE = 'cde8d9501f3ade151299ac7c204fb22ffee07589';
 export const WTLOS_TRANSFER_CIRCUIT_IDENTITY =
     '5b1bb02a9ff12b4beb86c2f8695d8c6e622ab73a821729134c280d90f0a4ea0a';
@@ -52,11 +52,10 @@ export class SnarkParams {
     }
 
     public async getParams(wasm: any, expectedHash?: string): Promise<any> {
-        // A WTLOS key must never be parsed by the legacy WASM Params class, even
-        // when its byte hash matches the release profile. The PR7 loader below
-        // has a separate module capability and does not populate this cache.
+        // Reject source-tagged WTLOS inputs before legacy WASM parsing. An
+        // untagged configuration cannot be classified by this generic class.
         if (this.expectedWTLOSCircuitSourceTree) {
-            throw new InternalError('WTLOS parameters require the source-bound browser loader');
+            throw new InternalError('Source-tagged WTLOS parameters cannot use the legacy parser');
         }
         const effectiveHash = this.resolveExpectedHash(expectedHash);
         if (!this.isParamsReady()) {
@@ -67,14 +66,25 @@ export class SnarkParams {
         return this.params;
     }
 
-    // Source-bound WTLOS artifact preflight. This does not enable proof dispatch:
-    // callers must still construct a current-circuit witness and satisfy the
-    // independent ceremony, runtime, and release-profile gates.
-    public async loadWTLOSArtifactsFromBytes(
-        module: any,
+    // Inspect only caller-supplied bytes against configured hashes and the
+    // PR8 source pin. No module is accepted, no key is parsed, and this receipt
+    // must not be used as evidence of ceremony or browser-prover readiness.
+    public async inspectWTLOSArtifactsFromBytes(
         paramsBytes: Uint8Array,
         vkBytes: Uint8Array
-    ): Promise<{params: any; verificationKey: any}> {
+    ): Promise<Readonly<{
+        status: 'INSPECTION_ONLY_NO_PROVER';
+        authoritative: false;
+        proverAvailable: false;
+        sourceTree: string;
+        transferCircuitIdentitySha256: string;
+        treeCircuitIdentitySha256: string;
+        parameterSha256: string;
+        verificationKeySha256: string;
+    }>> {
+        if (arguments.length !== 2) {
+            throw new InternalError('WTLOS artifact inspection accepts exactly two byte arrays');
+        }
         const source = this.expectedWTLOSCircuitSourceTree;
         const paramsHash = this.expectedParamsHash;
         const vkHash = this.expectedVkHash;
@@ -85,23 +95,6 @@ export class SnarkParams {
             throw new InternalError('WTLOS circuit source is not the reviewed PR8 tree');
         }
 
-        // Production modules must expose this distinct WTLOS capability. The
-        // unsafe Stage 0 fixture exposes UnsafeStage0Params instead and cannot
-        // satisfy this interface by accident.
-        const constructor = module?.WTLOSBrowserParams;
-        if (typeof constructor?.sourceTree !== 'function' ||
-            typeof constructor?.transferCircuitIdentitySha256 !== 'function' ||
-            typeof constructor?.treeCircuitIdentitySha256 !== 'function' ||
-            typeof constructor?.parameterSha256 !== 'function' ||
-            typeof constructor?.fromBinary !== 'function' ||
-            constructor.sourceTree().toLowerCase() !== source ||
-            constructor.transferCircuitIdentitySha256().toLowerCase() !==
-                WTLOS_TRANSFER_CIRCUIT_IDENTITY ||
-            constructor.treeCircuitIdentitySha256().toLowerCase() !==
-                WTLOS_TREE_CIRCUIT_IDENTITY ||
-            constructor.parameterSha256().toLowerCase() !== paramsHash) {
-            throw new InternalError('WTLOS browser module identity mismatch');
-        }
         if (!(paramsBytes instanceof Uint8Array) || !(vkBytes instanceof Uint8Array) ||
             this.sha256Hex(paramsBytes) !== paramsHash ||
             this.sha256Hex(vkBytes) !== vkHash) {
@@ -118,7 +111,16 @@ export class SnarkParams {
                 .every(field => Array.isArray(verificationKey[field]))) {
             throw new InternalError('Invalid WTLOS verification key structure');
         }
-        return {params: constructor.fromBinary(paramsBytes), verificationKey};
+        return Object.freeze({
+            status: 'INSPECTION_ONLY_NO_PROVER' as const,
+            authoritative: false as const,
+            proverAvailable: false as const,
+            sourceTree: source,
+            transferCircuitIdentitySha256: WTLOS_TRANSFER_CIRCUIT_IDENTITY,
+            treeCircuitIdentitySha256: WTLOS_TREE_CIRCUIT_IDENTITY,
+            parameterSha256: paramsHash,
+            verificationKeySha256: vkHash,
+        });
     }
 
     // VKs are much smaller than params so we can refetch it in case any errors

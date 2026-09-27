@@ -6,7 +6,7 @@ const test = require('node:test');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-// Exercise the actual shipped SnarkParams source without a browser, network,
+// Exercise the draft SnarkParams source without a browser, network,
 // proving key, signer, wallet, or relayer. All bytes here are synthetic.
 const sourcePath = path.join(__dirname, '../src/params.ts');
 const compiled = ts.transpileModule(fs.readFileSync(sourcePath, 'utf8'), {
@@ -50,72 +50,57 @@ const config = (paramsBytes = key, vkBytes = vk) => ({
   transferVkSha256: sha(vkBytes),
   wtlosCircuitSourceTree: tree,
 });
-function moduleFor(hash = sha(key), source = tree,
-  transfer = transferIdentity, treeUpdate = treeIdentity) {
-  const calls = {parse: 0};
-  return {
-    calls,
-    module: {WTLOSBrowserParams: {
-      sourceTree: () => source,
-      transferCircuitIdentitySha256: () => transfer,
-      treeCircuitIdentitySha256: () => treeUpdate,
-      parameterSha256: () => hash,
-      fromBinary: bytes => { calls.parse++; return {byteLength: bytes.length}; },
-    }},
-  };
-}
-
-test('matching PR8 source, identities, key, and VK reach only the distinct WTLOS parser', async () => {
+test('matching synthetic bytes produce a frozen, explicitly non-prover PR8 inspection receipt', async () => {
   assert.equal(testedExports.WTLOS_CIRCUIT_SOURCE_TREE, tree);
   assert.equal(testedExports.WTLOS_TRANSFER_CIRCUIT_IDENTITY, transferIdentity);
   assert.equal(testedExports.WTLOS_TREE_CIRCUIT_IDENTITY, treeIdentity);
   const params = new SnarkParams(config());
-  const {calls, module} = moduleFor();
-  const loaded = await params.loadWTLOSArtifactsFromBytes(module, key, vk);
-  assert.equal(calls.parse, 1);
-  assert.equal(loaded.params.byteLength, key.length);
-  assert.deepEqual(Object.keys(loaded.verificationKey).sort(),
-    ['alpha', 'beta', 'delta', 'gamma', 'ic']);
+  const receipt = await params.inspectWTLOSArtifactsFromBytes(key, vk);
+  assert.equal(Object.isFrozen(receipt), true);
+  assert.equal(receipt.status, 'INSPECTION_ONLY_NO_PROVER');
+  assert.equal(receipt.authoritative, false);
+  assert.equal(receipt.proverAvailable, false);
+  assert.equal(receipt.sourceTree, tree);
+  assert.equal(receipt.transferCircuitIdentitySha256, transferIdentity);
+  assert.equal(receipt.treeCircuitIdentitySha256, treeIdentity);
+  assert.equal(receipt.parameterSha256, sha(key));
+  assert.equal(receipt.verificationKeySha256, sha(vk));
+  assert.equal('params' in receipt, false);
+  assert.equal('verificationKey' in receipt, false);
+  let legacyCalls = 0;
   await assert.rejects(params.getParams({Params: {fromBinary: () => {
-    throw new Error('legacy parser reached');
-  }}}), /source-bound browser loader/);
+    legacyCalls++;
+  }}}), /Source-tagged WTLOS parameters cannot use the legacy parser/);
+  assert.equal(legacyCalls, 0);
 });
 
-test('WTLOS loader rejects old source, identities, module claim, and changed bytes before parsing', async () => {
+test('inspection rejects old source, changed bytes, and a caller-supplied module', async () => {
   const params = new SnarkParams(config());
-  for (const {module, calls} of [
-    moduleFor(sha(key), oldTree),
-    moduleFor('f'.repeat(64)),
-    moduleFor(sha(key), tree, '0'.repeat(64)),
-    moduleFor(sha(key), tree, transferIdentity, '0'.repeat(64)),
-    {module: {UnsafeStage0Params: moduleFor().module.WTLOSBrowserParams}, calls: {parse: 0}},
-  ]) {
-    await assert.rejects(params.loadWTLOSArtifactsFromBytes(module, key, vk));
-    assert.equal(calls.parse, 0);
-  }
   const staleConfig = new SnarkParams({...config(), wtlosCircuitSourceTree: oldTree});
-  await assert.rejects(staleConfig.loadWTLOSArtifactsFromBytes(moduleFor().module, key, vk),
+  await assert.rejects(staleConfig.inspectWTLOSArtifactsFromBytes(key, vk),
     /reviewed PR8 tree/);
-  const {module, calls} = moduleFor();
-  await assert.rejects(params.loadWTLOSArtifactsFromBytes(module,
+  await assert.rejects(params.inspectWTLOSArtifactsFromBytes(
     Uint8Array.from([1, 2, 3, 5]), vk), /byte hash mismatch/);
-  await assert.rejects(params.loadWTLOSArtifactsFromBytes(module,
+  await assert.rejects(params.inspectWTLOSArtifactsFromBytes(
     key, Uint8Array.from([0])), /byte hash mismatch/);
-  assert.equal(calls.parse, 0);
+  let parserCalls = 0;
+  const hostileModule = {WTLOSBrowserParams: {fromBinary: () => { parserCalls++; }}};
+  await assert.rejects(params.inspectWTLOSArtifactsFromBytes(key, vk, hostileModule),
+    /exactly two byte arrays/);
+  await assert.rejects(params.inspectWTLOSArtifactsFromBytes(hostileModule, vk),
+    /byte hash mismatch/);
+  assert.equal(parserCalls, 0);
 });
 
-test('WTLOS loader requires complete pins and valid VK JSON before parsing', async () => {
+test('inspection requires complete pins and valid VK JSON', async () => {
   const partial = new SnarkParams({...config(), transferVkSha256: undefined});
-  const {module} = moduleFor();
-  await assert.rejects(partial.loadWTLOSArtifactsFromBytes(module, key, vk),
+  await assert.rejects(partial.inspectWTLOSArtifactsFromBytes(key, vk),
     /source, params, and VK hashes are required/);
 
   for (const bytes of [new TextEncoder().encode('not-json'),
     new TextEncoder().encode('{}')]) {
     const params = new SnarkParams(config(key, bytes));
-    const {module: matching, calls} = moduleFor();
-    await assert.rejects(params.loadWTLOSArtifactsFromBytes(matching, key, bytes),
+    await assert.rejects(params.inspectWTLOSArtifactsFromBytes(key, bytes),
       /verification key/);
-    assert.equal(calls.parse, 0);
   }
 });
