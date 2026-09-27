@@ -66,10 +66,15 @@ def check_build_inputs() -> None:
 
     browser_changes = changes(EXPECTED_PR76_BROWSER_COMMIT)
     wallet_changes = changes(EXPECTED_WALLET_PROFILE_COMMIT) - browser_changes
+    build_evidence_paths = {
+        ".github/workflows/unsafe-pr7-composed-wallet-build.yml",
+        ".github/scripts/unsafe-pr7-composed-wallet-build.sh",
+    }
     changed = changes("HEAD")
-    assert changed == browser_changes | wallet_changes, (
-        f"composed source path set drift: extra={sorted(changed - browser_changes - wallet_changes)}, "
-        f"missing={sorted((browser_changes | wallet_changes) - changed)}"
+    expected = browser_changes | wallet_changes | build_evidence_paths
+    assert changed == expected, (
+        f"composed source path set drift: extra={sorted(changed - expected)}, "
+        f"missing={sorted(expected - changed)}"
     )
     this_verifier = Path(__file__).relative_to(ROOT).as_posix()
     for path in browser_changes:
