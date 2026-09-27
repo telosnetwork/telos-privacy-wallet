@@ -21,7 +21,7 @@ set -x
 test "$(rustc +1.94.0 --version)" = 'rustc 1.94.0 (4a4ef493e 2026-03-02)'
 test "$(rustc +nightly-2026-05-17 --version)" = 'rustc 1.97.0-nightly (d3cd04068 2026-05-16)'
 test "$("$WASM_BINDGEN_BIN" --version)" = 'wasm-bindgen 0.2.106'
-test "$(node --version)" = 'v20.20.1'
+test "$(node --version)" = 'v22.22.0'
 test "$(yarn --version)" = '1.22.22'
 rustup target list --installed --toolchain 1.94.0 | grep -qx wasm32-unknown-unknown
 rustup target list --installed --toolchain nightly-2026-05-17 | grep -qx wasm32-unknown-unknown
@@ -90,12 +90,12 @@ PY
 # The repository's preinstall runs a floating-toolchain WASM generator. These
 # source-bound packages already exist, so suppress lifecycle scripts here.
 yarn install --frozen-lockfile --ignore-scripts --non-interactive --network-concurrency 1
-yarn workspace zkbob-client-js check
-yarn workspace zkbob-client-js build
+yarn workspace zkbob-client-js run check
+yarn workspace zkbob-client-js run build
 CI=false GENERATE_SOURCEMAP=false REACT_APP_CONFIG=dev \
   NODE_OPTIONS=--max-old-space-size=6144 \
   REACT_APP_WALLETCONNECT_PROJECT_ID=ci-placeholder \
-  yarn workspace zktelos-wallet build
+  yarn workspace zktelos-wallet run build
 
 python3 - "$ROOT" "$EVIDENCE_DIR" "$WASM_BINDGEN_BIN" <<'PY'
 import hashlib
