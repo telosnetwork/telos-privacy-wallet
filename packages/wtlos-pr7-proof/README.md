@@ -59,6 +59,7 @@ run the wallet-builder proof experiment explicitly:
 
 ```sh
 UNSAFE_PR7_CONVERTED_KEY=/path/to/UNSAFE_stage0_converted_transfer.bin \
+  UNSAFE_PR7_STAGE0_TRANSFER_VK=/path/to/current_source_transfer_vk.json \
   cargo test --offline --locked \
   --manifest-path packages/wtlos-pr7-proof/Cargo.toml \
   --test legacy_wallet_bridge -- --ignored --nocapture

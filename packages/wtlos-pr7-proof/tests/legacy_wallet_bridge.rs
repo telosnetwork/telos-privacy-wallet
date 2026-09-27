@@ -37,6 +37,8 @@ const PROXY: [u8; 20] = [
 ];
 const UNSAFE_STAGE0_KEY_SHA256: &str =
     "44f01686622e4935d67a481a0668837afa5c6a8c54b1b9de03280744284d50c1";
+const UNSAFE_STAGE0_CURRENT_SOURCE_VK_SHA256: &str =
+    "ed60454f211c648a76ec70210f66aabe1baccca6ec6b9e35bd2f86ea8a637d99";
 
 fn wallet_deposit_witness() -> (DepositWitness, Num<Fr>) {
     // This is the actual legacy wallet transaction builder and in-memory state,
@@ -141,15 +143,24 @@ fn actual_wallet_witness_can_be_finalized_only_after_explicit_pr7_conversion() {
 fn actual_wallet_witness_proves_against_source_matched_stage0_key() {
     let path = std::env::var("UNSAFE_PR7_CONVERTED_KEY")
         .expect("set the exact sealed, zero-contribution Stage 0 converted key path");
+    let vk_path = std::env::var("UNSAFE_PR7_STAGE0_TRANSFER_VK")
+        .expect("set the independently exported, current-source Stage 0 transfer VK path");
     let bytes = std::fs::read(path).unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(&bytes)),
         UNSAFE_STAGE0_KEY_SHA256
     );
+    let vk_bytes = std::fs::read(vk_path).unwrap();
+    assert_eq!(
+        hex::encode(Sha256::digest(&vk_bytes)),
+        UNSAFE_STAGE0_CURRENT_SOURCE_VK_SHA256
+    );
     let mut reader = bytes.as_slice();
     let params = Parameters::<Bn256>::read(&mut reader, true, true).unwrap();
     assert!(reader.is_empty());
     assert_eq!(params.1, 196_327);
+    let exported_vk: serde_json::Value = serde_json::from_slice(&vk_bytes).unwrap();
+    assert_eq!(serde_json::to_value(params.get_vk()).unwrap(), exported_vk);
 
     let (witness, _) = wallet_deposit_witness();
     let result = prove_deposit_with_unchecked_key(&params, witness).unwrap();

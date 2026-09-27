@@ -46,11 +46,11 @@ WALLET_BRIDGE_SHA256 = {
     "packages/wtlos-pr7-proof/Cargo.lock":
         "fb3ef167633f73985f67474330186960f4d48563a6bb5eb81fd506d439d97f4e",
     "packages/wtlos-pr7-proof/README.md":
-        "8f23a22a5064f6e970de97d68bce6527388ef72645af4deaf8355cabbe3fb2f5",
+        "f67c24b971a0fbb256ce46c698a72c94d49ad8feab5253dd3f28256db160b850",
     "packages/wtlos-pr7-proof/src/lib.rs":
         "296a31a97e88e2c01945436768048bb5a5177233bd12ad12d1e9066ff64f74ea",
     "packages/wtlos-pr7-proof/tests/legacy_wallet_bridge.rs":
-        "34507a2b961ad129d2cff20ec0d254a3cc54b8d537652d846d49d09ed7563a9b",
+        "fbd5275cd61eee4fe097e9e45626a11ca02126d2816ce63d8ce5db062488b4d0",
     "packages/wtlos-pr7-stage0-wasm/SOURCE-PIN.json":
         "f3ff8ca5c099c5b8ee370876e65085ba59b4104b6fa9d31af620c6397f30cecf",
 }
