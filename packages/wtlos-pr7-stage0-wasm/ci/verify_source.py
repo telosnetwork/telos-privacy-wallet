@@ -19,6 +19,13 @@ EXPECTED_MPC_SHA256 = "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7
 EXPECTED_KEY_SHA256 = "44f01686622e4935d67a481a0668837afa5c6a8c54b1b9de03280744284d50c1"
 EXPECTED_KEY_BYTES = 72_498_469
 EXPECTED_BINDGEN_VERSION = "0.2.118"
+PHASE2_VENDOR = CRATE / "vendor/fawkes-crypto-phase2-0.2.3"
+PHASE2_ORIGIN = CRATE / "ci/phase2-origin.json"
+EXPECTED_PHASE2_COMMIT = "0d286cc94af78e96d3d1184b0e38246714afa838"
+EXPECTED_PHASE2_ORIGIN_TREE = "7f15bbc81038e51c6828920a9424ef16cb0dbddb"
+EXPECTED_PHASE2_VENDOR_TREE = "c04785b88098c16a73d3fa320758f8f15dcbc8ca"
+EXPECTED_PHASE2_CERT_SHA256 = "1ba55687c39e283d0b796a4e1a21a228d586612a411186b67e4a2502395c4612"
+EXPECTED_PHASE2_MANIFEST_SHA256 = "61c8ecd743da474bfbcf92a00b26a6776f8badddf9cdb273d51f3b15f257a12c"
 
 
 def sha256(path: Path) -> str:
@@ -64,6 +71,78 @@ def check_build_inputs() -> None:
                 )
 
 
+def check_phase2_patch(pin: dict) -> None:
+    """Keep the original PR7 tree intact and bind the distinct Phase 2 manifest."""
+    assert pin["phase2_upstream_git_commit"] == EXPECTED_PHASE2_COMMIT
+    assert pin["phase2_upstream_package_tree"] == EXPECTED_PHASE2_ORIGIN_TREE
+    assert pin["phase2_vendored_package_tree"] == EXPECTED_PHASE2_VENDOR_TREE
+    assert pin["phase2_origin_certificate_sha256"] == EXPECTED_PHASE2_CERT_SHA256
+    assert pin["phase2_vendored_manifest_sha256"] == EXPECTED_PHASE2_MANIFEST_SHA256
+    assert sha256(PHASE2_ORIGIN) == EXPECTED_PHASE2_CERT_SHA256
+    origin = json.loads(PHASE2_ORIGIN.read_text())
+    assert origin["schema"] == "telos-stage0-phase2-upstream-files-v1"
+    assert origin["upstream_url"] == "https://github.com/zkBob/phase2-bn254"
+    assert origin["upstream_commit"] == EXPECTED_PHASE2_COMMIT
+    assert origin["upstream_package_path"] == "phase2"
+    assert origin["upstream_package_tree"] == EXPECTED_PHASE2_ORIGIN_TREE
+    files = {}
+    for path in PHASE2_VENDOR.rglob("*"):
+        assert not path.is_symlink(), f"Phase 2 vendor symlink: {path}"
+        if path.is_file():
+            files[path.relative_to(PHASE2_VENDOR).as_posix()] = sha256(path)
+    assert files.keys() == origin["files_sha256"].keys(), "Phase 2 vendor file set differs from upstream"
+    assert files["Cargo.toml"] == EXPECTED_PHASE2_MANIFEST_SHA256
+    for path, expected in origin["files_sha256"].items():
+        if path != "Cargo.toml":
+            assert files[path] == expected, f"Phase 2 upstream file changed: {path}"
+
+    vendor_tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD:packages/wtlos-pr7-stage0-wasm/vendor/fawkes-crypto-phase2-0.2.3"],
+        cwd=ROOT, text=True,
+    ).strip()
+    assert vendor_tree == EXPECTED_PHASE2_VENDOR_TREE, "Phase 2 vendor Git tree drift"
+    crate_manifest = (CRATE / "Cargo.toml").read_text()
+    assert (
+        '[patch."https://github.com/zkBob/phase2-bn254"]\n'
+        'fawkes-crypto-phase2 = { path = "vendor/fawkes-crypto-phase2-0.2.3" }'
+    ) in crate_manifest
+    phase2_manifest = (PHASE2_VENDOR / "Cargo.toml").read_text()
+    assert (
+        '[target.\'cfg(not(target_arch = "wasm32"))\'.dependencies]\n'
+        'rust-crypto = { version = "0.2", optional = true }'
+    ) in phase2_manifest
+    assert phase2_manifest.count('rust-crypto = { version = "0.2", optional = true }') == 1
+    assert 'git = "https://github.com/zkBob/phase2-bn254", branch = "master"' in phase2_manifest
+    phase2_packages = [
+        block for block in (CRATE / "Cargo.lock").read_text().split("[[package]]")
+        if re.search(r'^name = "fawkes-crypto-phase2"$', block, re.MULTILINE)
+    ]
+    assert len(phase2_packages) == 1 and not re.search(r'^source = ', phase2_packages[0], re.MULTILINE), (
+        "Cargo.lock must resolve Phase 2 to the pinned local variant"
+    )
+
+
+def check_upstream_phase2_repo(repo: Path) -> None:
+    """Optional independent replay against the pinned upstream Git object."""
+    origin = json.loads(PHASE2_ORIGIN.read_text())
+    tree = subprocess.check_output(
+        ["git", "-C", str(repo), "rev-parse", f"{EXPECTED_PHASE2_COMMIT}:phase2"], text=True
+    ).strip()
+    assert tree == EXPECTED_PHASE2_ORIGIN_TREE, "upstream Phase 2 tree mismatch"
+    paths = subprocess.check_output(
+        ["git", "-C", str(repo), "ls-tree", "-r", "--name-only", "-z", EXPECTED_PHASE2_COMMIT, "phase2"]
+    ).split(b"\0")
+    actual = {}
+    for raw in paths:
+        if raw:
+            full = raw.decode()
+            data = subprocess.check_output(
+                ["git", "-C", str(repo), "show", f"{EXPECTED_PHASE2_COMMIT}:{full}"]
+            )
+            actual[full.removeprefix("phase2/")] = hashlib.sha256(data).hexdigest()
+    assert actual == origin["files_sha256"], "upstream Phase 2 certificate mismatch"
+
+
 def check_source() -> dict:
     check_build_inputs()
     pin = json.loads((CRATE / "SOURCE-PIN.json").read_text())
@@ -90,6 +169,7 @@ def check_source() -> dict:
         ["git", "rev-parse", "HEAD:packages/libzeropool-pr7"], cwd=ROOT, text=True
     ).strip()
     assert actual_tree == EXPECTED_SOURCE_TREE, "vendored circuit tree drift"
+    check_phase2_patch(pin)
     lock = (CRATE / "Cargo.lock").read_text()
     versions = []
     for block in lock.split("[[package]]"):
@@ -109,8 +189,11 @@ def check_source() -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--key", type=Path, help="exact unqualified converted Stage 0 test key")
+    parser.add_argument("--upstream-phase2-repo", type=Path, help="replay the Phase 2 origin certificate against a local Git checkout")
     args = parser.parse_args()
     check_source()
+    if args.upstream_phase2_repo is not None:
+        check_upstream_phase2_repo(args.upstream_phase2_repo)
     if args.key is not None:
         if not args.key.is_file():
             raise SystemExit("HOLD: exact converted Stage 0 key is missing")

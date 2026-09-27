@@ -19,6 +19,20 @@ different PR7-specific browser module API and remains fail-closed. There is
 no qualified ceremony, generated browser WASM, source-to-WASM artifact seal,
 browser witness builder, or end-to-end browser proof validation here.
 
+The isolated browser build uses a local Phase 2 dependency variant to avoid
+the native-only `rust-crypto` and `rustc-serialize` packages on
+`wasm32-unknown-unknown`. The PR7 circuit package itself retains the exact
+`7a22196e1d4a791b452a6140bdfa915298f3f1da` Git tree and its ceremony
+source lock. The variant copies upstream Phase 2 commit
+`0d286cc94af78e96d3d1184b0e38246714afa838`; its only upstream file
+change is `Cargo.toml`, moving `rust-crypto` to non-WASM targets and
+resolving the same pinned Bellman Git source instead of an unavailable sibling
+path. `ci/phase2-origin.json` pins all 27 upstream files, and
+`ci/verify_source.py` checks every copied file, the distinct vendor tree,
+the lockfile override, and the unchanged PR7 tree. This dependency
+substitution still needs a hosted WASM build and a relation/key compatibility
+check; identical PR7 source bytes alone do not prove either.
+
 The opt-in `convert_exact_stage0_for_browser` test uses the exact sealed MPC
 file and VK JSON, replays PR7 transfer gate compression, and writes the
 converted key at a new path. Its output was independently hashed and the

@@ -91,6 +91,11 @@ def main() -> int:
                 "git", "rev-parse", "HEAD:.github/workflows/unsafe-pr7-stage0-browser.yml"
             ),
             "vendored_pr7_git_tree": pin["vendored_pr7_git_tree"],
+            "phase2_upstream_git_commit": pin["phase2_upstream_git_commit"],
+            "phase2_upstream_package_tree": pin["phase2_upstream_package_tree"],
+            "phase2_vendored_package_tree": pin["phase2_vendored_package_tree"],
+            "phase2_origin_certificate_sha256": pin["phase2_origin_certificate_sha256"],
+            "phase2_vendored_manifest_sha256": pin["phase2_vendored_manifest_sha256"],
             "cargo_lock_sha256": sha256(CRATE / "Cargo.lock"),
             "adapter_sha256": sha256(CRATE / "src/lib.rs"),
             "source_pin_sha256": sha256(CRATE / "SOURCE-PIN.json"),

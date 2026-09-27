@@ -21,3 +21,6 @@ hex = "0.4.3"
 serde_json = "1.0"
 brotli = "3.3.2"
 fawkes-crypto-phase2 = { git = "https://github.com/zkBob/phase2-bn254", branch = "master", package = "fawkes-crypto-phase2", version = "0.2.3" }
+
+[patch."https://github.com/zkBob/phase2-bn254"]
+fawkes-crypto-phase2 = { path = "vendor/fawkes-crypto-phase2-0.2.3" }
