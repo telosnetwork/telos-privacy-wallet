@@ -41,6 +41,15 @@ keys, and rejects an unsupported transaction kind. The evidence manifest
 binds the source commit/tree, lock, JS, WASM and browser result hashes. It
 never uploads the key.
 
+The WASM crate alone patches `rustc-serialize 0.3.25` from the crates.io archive
+with SHA-256 `fe834bc780604f4674073badbad26d7219cadfb4a2275802db12cbae17498401`.
+The only upstream code change is in `src/serialize.rs`: two `cfg` predicates
+reuse its Redox UTF-8 path encoding for `wasm32-unknown-unknown`, where neither
+the Unix nor Windows path methods exist. `verify_source.py` checks the full
+vendored tree hash and the locked path override. This dependency patch does not
+change the pinned PR7 circuit tree or native path encoding. The browser WASM
+build still requires hosted compilation and inspection.
+
 This is a **key-parser/browser-build fixture, not a browser proof fixture**:
 there is no PR7-native browser witness serialization fixture, generated
 browser proof, or browser proof verification yet. Neither event has run on a

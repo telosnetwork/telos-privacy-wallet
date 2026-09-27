@@ -14,6 +14,8 @@ ROOT = CRATE.parents[1]
 EXPECTED_SOURCE_TREE = "7a22196e1d4a791b452a6140bdfa915298f3f1da"
 EXPECTED_WALLET_MAIN_BASE = "4354c9c279eb40c3a4164d97695985124285d9ce"
 EXPECTED_PROOF_DOMAIN_SHA256 = "b4a9cfc6c3c46231231d76028bdcfb290504d09f83617a3acfbf2d2df31e1918"
+EXPECTED_RUSTC_SERIALIZE_CRATE_SHA256 = "fe834bc780604f4674073badbad26d7219cadfb4a2275802db12cbae17498401"
+EXPECTED_RUSTC_SERIALIZE_PATCH_TREE_SHA256 = "3260b2670be454fd82acd7bdf5fe773e8fd226f146c6e22336c02abd8ccd9bc9"
 EXPECTED_MPC_SHA256 = "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7843ba30"
 EXPECTED_KEY_SHA256 = "44f01686622e4935d67a481a0668837afa5c6a8c54b1b9de03280744284d50c1"
 EXPECTED_KEY_BYTES = 72_498_469
@@ -28,12 +30,26 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_tree(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(path for path in root.rglob("*") if path.is_file()):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(bytes.fromhex(sha256(path)))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def check_source() -> dict:
     pin = json.loads((CRATE / "SOURCE-PIN.json").read_text())
     assert pin["schema"] == "telos-pr7-browser-stage0-adapter-v1"
     assert pin["wallet_main_base_commit"] == EXPECTED_WALLET_MAIN_BASE
     assert pin["vendored_pr7_git_tree"] == EXPECTED_SOURCE_TREE
     assert pin["proof_domain_codec_sha256"] == EXPECTED_PROOF_DOMAIN_SHA256
+    assert pin["rustc_serialize_0_3_25_crate_sha256"] == EXPECTED_RUSTC_SERIALIZE_CRATE_SHA256
+    assert pin["rustc_serialize_wasm_patch_tree_sha256"] == EXPECTED_RUSTC_SERIALIZE_PATCH_TREE_SHA256
+    vendor = CRATE / "vendor/rustc-serialize-0.3.25"
+    assert sha256_tree(vendor) == EXPECTED_RUSTC_SERIALIZE_PATCH_TREE_SHA256, "patched dependency drift"
     proof = CRATE.parent / "wtlos-pr7-proof"
     assert sha256(proof / "src/domain.rs") == EXPECTED_PROOF_DOMAIN_SHA256
     proof_pin = json.loads((proof / "SOURCE-PIN.json").read_text())
@@ -54,6 +70,13 @@ def check_source() -> dict:
     ).strip()
     assert actual_tree == EXPECTED_SOURCE_TREE, "vendored circuit tree drift"
     lock = (CRATE / "Cargo.lock").read_text()
+    rustc_serialize_blocks = [
+        block for block in lock.split("[[package]]")
+        if re.search(r'^name = "rustc-serialize"$', block, re.MULTILINE)
+    ]
+    assert len(rustc_serialize_blocks) == 1, "rustc-serialize lock entry missing or duplicated"
+    assert re.search(r'^version = "0.3.25"$', rustc_serialize_blocks[0], re.MULTILINE)
+    assert not re.search(r'^(source|checksum) = ', rustc_serialize_blocks[0], re.MULTILINE), "rustc-serialize path patch missing"
     versions = []
     for block in lock.split("[[package]]"):
         if re.search(r'^name = "wasm-bindgen"$', block, re.MULTILINE):
@@ -62,6 +85,7 @@ def check_source() -> dict:
             versions.append(match.group(1))
     assert versions == [EXPECTED_BINDGEN_VERSION], f"wasm-bindgen lock drift: {versions}"
     crate_manifest = (CRATE / "Cargo.toml").read_text()
+    assert 'rustc-serialize = { path = "vendor/rustc-serialize-0.3.25" }' in crate_manifest
     assert 'features = ["serde_support", "wasm"]' in crate_manifest, "WASM entropy feature missing"
     lib = (CRATE / "src/lib.rs").read_text()
     assert EXPECTED_MPC_SHA256 in lib and EXPECTED_KEY_SHA256 in lib
