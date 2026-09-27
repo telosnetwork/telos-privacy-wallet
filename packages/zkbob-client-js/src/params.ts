@@ -4,6 +4,13 @@ import { SnarkConfigParams } from "./config";
 import sha256 from 'fast-sha256';
 
 const MAX_VK_LOAD_ATTEMPTS = 3;
+// Draft circuits PR8 identity. Any relation change needs new reviewed source,
+// ceremony, proving key, and VK pins before this loader can accept artifacts.
+export const WTLOS_CIRCUIT_SOURCE_TREE = 'cde8d9501f3ade151299ac7c204fb22ffee07589';
+export const WTLOS_TRANSFER_CIRCUIT_IDENTITY =
+    '5b1bb02a9ff12b4beb86c2f8695d8c6e622ab73a821729134c280d90f0a4ea0a';
+export const WTLOS_TREE_CIRCUIT_IDENTITY =
+    '45c77c1a59970ff81f272041474627398ba93a47570b6dd9f440a9045b322610';
 
 export enum LoadingStatus {
     NotStarted = 0,
@@ -45,11 +52,11 @@ export class SnarkParams {
     }
 
     public async getParams(wasm: any, expectedHash?: string): Promise<any> {
-        // A PR7 key must never be parsed by the legacy WASM Params class, even
+        // A WTLOS key must never be parsed by the legacy WASM Params class, even
         // when its byte hash matches the release profile. The PR7 loader below
         // has a separate module capability and does not populate this cache.
         if (this.expectedWTLOSCircuitSourceTree) {
-            throw new InternalError('WTLOS PR7 parameters require the source-bound browser loader');
+            throw new InternalError('WTLOS parameters require the source-bound browser loader');
         }
         const effectiveHash = this.resolveExpectedHash(expectedHash);
         if (!this.isParamsReady()) {
@@ -60,10 +67,10 @@ export class SnarkParams {
         return this.params;
     }
 
-    // Source-bound PR7 artifact preflight. This does not enable proof dispatch:
-    // callers must still construct a PR7-native witness and satisfy the
+    // Source-bound WTLOS artifact preflight. This does not enable proof dispatch:
+    // callers must still construct a current-circuit witness and satisfy the
     // independent ceremony, runtime, and release-profile gates.
-    public async loadWTLOSPR7ArtifactsFromBytes(
+    public async loadWTLOSArtifactsFromBytes(
         module: any,
         paramsBytes: Uint8Array,
         vkBytes: Uint8Array
@@ -72,35 +79,44 @@ export class SnarkParams {
         const paramsHash = this.expectedParamsHash;
         const vkHash = this.expectedVkHash;
         if (!source || !paramsHash || !vkHash) {
-            throw new InternalError('WTLOS PR7 source, params, and VK hashes are required');
+            throw new InternalError('WTLOS source, params, and VK hashes are required');
+        }
+        if (source !== WTLOS_CIRCUIT_SOURCE_TREE) {
+            throw new InternalError('WTLOS circuit source is not the reviewed PR8 tree');
         }
 
-        // Production modules must expose this distinct PR7 capability. The
+        // Production modules must expose this distinct WTLOS capability. The
         // unsafe Stage 0 fixture exposes UnsafeStage0Params instead and cannot
         // satisfy this interface by accident.
-        const constructor = module?.WTLOSPR7Params;
+        const constructor = module?.WTLOSBrowserParams;
         if (typeof constructor?.sourceTree !== 'function' ||
+            typeof constructor?.transferCircuitIdentitySha256 !== 'function' ||
+            typeof constructor?.treeCircuitIdentitySha256 !== 'function' ||
             typeof constructor?.parameterSha256 !== 'function' ||
             typeof constructor?.fromBinary !== 'function' ||
             constructor.sourceTree().toLowerCase() !== source ||
+            constructor.transferCircuitIdentitySha256().toLowerCase() !==
+                WTLOS_TRANSFER_CIRCUIT_IDENTITY ||
+            constructor.treeCircuitIdentitySha256().toLowerCase() !==
+                WTLOS_TREE_CIRCUIT_IDENTITY ||
             constructor.parameterSha256().toLowerCase() !== paramsHash) {
-            throw new InternalError('WTLOS PR7 browser module identity mismatch');
+            throw new InternalError('WTLOS browser module identity mismatch');
         }
         if (!(paramsBytes instanceof Uint8Array) || !(vkBytes instanceof Uint8Array) ||
             this.sha256Hex(paramsBytes) !== paramsHash ||
             this.sha256Hex(vkBytes) !== vkHash) {
-            throw new InternalError('WTLOS PR7 parameter or VK byte hash mismatch');
+            throw new InternalError('WTLOS parameter or VK byte hash mismatch');
         }
         let verificationKey: any;
         try {
             verificationKey = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(vkBytes));
         } catch {
-            throw new InternalError('Invalid WTLOS PR7 verification key JSON');
+            throw new InternalError('Invalid WTLOS verification key JSON');
         }
         if (!verificationKey || typeof verificationKey !== 'object' ||
             !['alpha', 'beta', 'gamma', 'delta', 'ic']
                 .every(field => Array.isArray(verificationKey[field]))) {
-            throw new InternalError('Invalid WTLOS PR7 verification key structure');
+            throw new InternalError('Invalid WTLOS verification key structure');
         }
         return {params: constructor.fromBinary(paramsBytes), verificationKey};
     }
