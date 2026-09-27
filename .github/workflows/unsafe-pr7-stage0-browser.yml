@@ -1,0 +1,133 @@
+name: UNSAFE_STAGE0_NO_GO PR7 browser adapter evidence
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/unsafe-pr7-stage0-browser.yml
+      - packages/libzeropool-pr7/**
+      - packages/wtlos-pr7-proof/**
+      - packages/wtlos-pr7-stage0-wasm/**
+  workflow_dispatch:
+    inputs:
+      converted_stage0_key_url:
+        description: HTTPS URL for the exact 72 MB unqualified Stage 0 converted transfer key
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-browser-check:
+    name: Test-only PR7 WASM; Chromium key parser on manual dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      UNSAFE_PR7_CONVERTED_KEY_URL: ${{ inputs.converted_stage0_key_url }}
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set isolated runner paths
+        run: |
+          echo "CARGO_TARGET_DIR=${RUNNER_TEMP}/wtlos-pr7-stage0-target" >> "${GITHUB_ENV}"
+          echo "STAGE0_EVIDENCE_DIR=${RUNNER_TEMP}/wtlos-pr7-stage0-evidence" >> "${GITHUB_ENV}"
+          echo "UNSAFE_PR7_CONVERTED_KEY=${RUNNER_TEMP}/wtlos-pr7-stage0-converted-key.bin" >> "${GITHUB_ENV}"
+
+      - name: Verify source and release gate pins
+        run: python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
+
+      - name: Install pinned Rust toolchain and WASM target
+        run: |
+          rustup toolchain install 1.94.0 --profile minimal --target wasm32-unknown-unknown
+          rustc +1.94.0 --version
+          cargo +1.94.0 --version
+
+      - name: Native regression tests and locked WASM build
+        run: |
+          cargo +1.94.0 test --locked --manifest-path packages/wtlos-pr7-stage0-wasm/Cargo.toml --lib
+          cargo +1.94.0 build --locked --release --target wasm32-unknown-unknown --manifest-path packages/wtlos-pr7-stage0-wasm/Cargo.toml
+
+      - name: Install matching pinned wasm-bindgen CLI and generate browser glue
+        run: |
+          cargo +1.94.0 install wasm-bindgen-cli --version 0.2.118 --locked --root "${RUNNER_TEMP}/wtlos-pr7-stage0-tools"
+          mkdir -p "${STAGE0_EVIDENCE_DIR}/pkg"
+          "${RUNNER_TEMP}/wtlos-pr7-stage0-tools/bin/wasm-bindgen" \
+            "${CARGO_TARGET_DIR}/wasm32-unknown-unknown/release/wtlos_pr7_stage0_wasm.wasm" \
+            --target web --no-typescript --out-name stage0 --out-dir "${STAGE0_EVIDENCE_DIR}/pkg"
+
+      - name: Install pinned Node and isolated Chromium fixture dependencies
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+
+      - name: Seal hosted JS and WASM build without key on draft PR
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/seal.py \
+            "${STAGE0_EVIDENCE_DIR}" \
+            "${RUNNER_TEMP}/wtlos-pr7-stage0-tools/bin/wasm-bindgen" --build-only
+          cd "${STAGE0_EVIDENCE_DIR}"
+          sha256sum --check SHA256SUMS
+
+      - name: Upload test-only build evidence without key or browser claim
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNSAFE_STAGE0_NO_GO-pr7-wasm-build-evidence
+          path: ${{ runner.temp }}/wtlos-pr7-stage0-evidence
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Install Chromium fixture only
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: packages/wtlos-pr7-stage0-wasm/browser-test
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Fetch exact unqualified Stage 0 key or fail closed
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          case "${UNSAFE_PR7_CONVERTED_KEY_URL}" in
+            https://*) ;;
+            *) echo 'Stage 0 key URL must be HTTPS' >&2; exit 1 ;;
+          esac
+          curl --fail --show-error --silent --location --max-time 300 \
+            --max-filesize 80000000 --proto '=https' --proto-redir '=https' \
+            --output "${UNSAFE_PR7_CONVERTED_KEY}" "${UNSAFE_PR7_CONVERTED_KEY_URL}"
+          python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py \
+            --key "${UNSAFE_PR7_CONVERTED_KEY}"
+
+      - name: Run exact-key and changed-byte controls in Chromium
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          node packages/wtlos-pr7-stage0-wasm/browser-test/run.mjs \
+            "${STAGE0_EVIDENCE_DIR}/pkg" "${UNSAFE_PR7_CONVERTED_KEY}" \
+            "${STAGE0_EVIDENCE_DIR}/browser-result.json"
+
+      - name: Seal generated JS, WASM and browser result
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/seal.py \
+            "${STAGE0_EVIDENCE_DIR}" \
+            "${RUNNER_TEMP}/wtlos-pr7-stage0-tools/bin/wasm-bindgen"
+          cd "${STAGE0_EVIDENCE_DIR}"
+          sha256sum --check SHA256SUMS
+
+      - name: Upload test-only evidence without proving key
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNSAFE_STAGE0_NO_GO-pr7-browser-evidence
+          path: ${{ runner.temp }}/wtlos-pr7-stage0-evidence
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove fetched key from runner
+        if: always()
+        run: rm -f -- "${UNSAFE_PR7_CONVERTED_KEY}"

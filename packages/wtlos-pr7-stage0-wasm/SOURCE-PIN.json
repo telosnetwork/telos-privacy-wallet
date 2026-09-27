@@ -1,0 +1,12 @@
+{
+  "schema": "telos-pr7-browser-stage0-adapter-v1",
+  "wallet_main_base_commit": "4354c9c279eb40c3a4164d97695985124285d9ce",
+  "vendored_pr7_git_tree": "7a22196e1d4a791b452a6140bdfa915298f3f1da",
+  "transfer_stage0_mpc_sha256": "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7843ba30",
+  "transfer_stage0_vk_sha256": "9c829d89c9f094f472d10b9ea88dcf651c0f9ff8afa9630fea54196115e7ad82",
+  "converted_stage0_browser_key_sha256": "44f01686622e4935d67a481a0668837afa5c6a8c54b1b9de03280744284d50c1",
+  "qualified_ceremony": false,
+  "browser_wasm_built": false,
+  "wallet_worker_wired": false,
+  "production_release_approved": false
+}
