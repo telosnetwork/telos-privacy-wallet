@@ -25,9 +25,9 @@ PHASE2_VENDOR = CRATE / "vendor/fawkes-crypto-phase2-0.2.3"
 PHASE2_ORIGIN = CRATE / "ci/phase2-origin.json"
 EXPECTED_PHASE2_COMMIT = "0d286cc94af78e96d3d1184b0e38246714afa838"
 EXPECTED_PHASE2_ORIGIN_TREE = "7f15bbc81038e51c6828920a9424ef16cb0dbddb"
-EXPECTED_PHASE2_VENDOR_TREE = "c04785b88098c16a73d3fa320758f8f15dcbc8ca"
+EXPECTED_PHASE2_VENDOR_TREE = "d7630c115be08f1aad06f66b07b23d243e81bffd"
 EXPECTED_PHASE2_CERT_SHA256 = "1ba55687c39e283d0b796a4e1a21a228d586612a411186b67e4a2502395c4612"
-EXPECTED_PHASE2_MANIFEST_SHA256 = "61c8ecd743da474bfbcf92a00b26a6776f8badddf9cdb273d51f3b15f257a12c"
+EXPECTED_PHASE2_MANIFEST_SHA256 = "f345a6eed23f2085452266ec26b0b2e6ec945031fd3230823f4f64162bf8d4b4"
 
 
 def sha256(path: Path) -> str:
@@ -123,11 +123,21 @@ def check_phase2_patch(pin: dict) -> None:
         'fawkes-crypto-phase2 = { path = "vendor/fawkes-crypto-phase2-0.2.3" }'
     ) in crate_manifest
     phase2_manifest = (PHASE2_VENDOR / "Cargo.toml").read_text()
+    assert phase2_manifest.count('rust-crypto = { version = "0.2", optional = true }') == 1
+    assert 'default = ["rust-crypto"]' in phase2_manifest
+    assert 'default = ["bellman_ce/multicore", "rust-crypto"]' not in phase2_manifest
     assert (
         '[target.\'cfg(not(target_arch = "wasm32"))\'.dependencies]\n'
-        'rust-crypto = { version = "0.2", optional = true }'
+        'bellman_ce = { package = "fawkes-crypto-zkbob-bellman_ce", version="0.4.0", '
+        'git = "https://github.com/zkBob/phase2-bn254", branch = "master", '
+        'default-features = false, features = ["multicore"] }'
     ) in phase2_manifest
-    assert phase2_manifest.count('rust-crypto = { version = "0.2", optional = true }') == 1
+    assert (
+        '[target.\'cfg(target_arch = "wasm32")\'.dependencies]\n'
+        'bellman_ce = { package = "fawkes-crypto-zkbob-bellman_ce", version="0.4.0", '
+        'git = "https://github.com/zkBob/phase2-bn254", branch = "master", '
+        'default-features = false, features = ["wasm"] }'
+    ) in phase2_manifest
     assert 'git = "https://github.com/zkBob/phase2-bn254", branch = "master"' in phase2_manifest
     phase2_packages = [
         block for block in (CRATE / "Cargo.lock").read_text().split("[[package]]")

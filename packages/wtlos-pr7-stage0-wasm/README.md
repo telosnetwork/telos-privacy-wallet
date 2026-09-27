@@ -16,8 +16,12 @@ identity. Amounts and fees are canonical decimal strings; addresses are
 
 The production wallet worker does not import this crate. It requires a
 different PR7-specific browser module API and remains fail-closed. There is
-no qualified ceremony, generated browser WASM, source-to-WASM artifact seal,
-browser witness builder, or end-to-end browser proof validation here.
+no qualified ceremony, production browser witness builder, or end-to-end
+browser proof validation here. A prior exact-head hosted build and local
+Chromium key-parser control produced test-only JS/WASM evidence. The separate
+`browser-test/prove-stage0.mjs` diagnostic uses a sealed synthetic deposit
+witness; that earlier WASM trapped in Bellman CE's multicore waiter during
+proof construction, before any proof could be verified.
 
 The isolated browser build uses a local Phase 2 dependency variant to avoid
 the native-only `rust-crypto` and `rustc-serialize` packages on
@@ -32,6 +36,13 @@ path. `ci/phase2-origin.json` pins all 27 upstream files, and
 the lockfile override, and the unchanged PR7 tree. This dependency
 substitution still needs a hosted WASM build and a relation/key compatibility
 check; identical PR7 source bytes alone do not prove either.
+
+The Phase 2 variant now enables Bellman CE's `multicore` feature only for
+non-WASM targets, preserving the native feature graph while allowing the
+browser build to use Bellman's single-core implementation. This change is a
+test-only candidate prompted by the trapped browser prover. It requires a new
+exact-head hosted build, isolated browser proof, and source-matched Stage 0 VK
+verification before anyone can claim that the browser proof path works.
 
 The browser and standalone proof manifests request only PR7's
 `in3out127` circuit feature, excluding the native setup CLI and its
@@ -62,12 +73,14 @@ keys, and rejects an unsupported transaction kind. The evidence manifest
 binds the source commit/tree, lock, JS, WASM and browser result hashes. It
 never uploads the key.
 
-This is a **key-parser/browser-build fixture, not a browser proof fixture**:
-there is no PR7-native browser witness serialization fixture, generated
-browser proof, or browser proof verification yet. Neither event has run on a
-hosted runner from this isolated worktree, so no JS/WASM byte hashes exist
-yet. The source pin deliberately retains `browser_wasm_built: false` until a
-hosted run is inspected. Publishing a draft PR does not merge it: a merge to
+This remains a **test-only browser fixture**. The synthetic PR7 witness
+diagnostic is not a production witness builder, and no browser proof or
+browser proof verification has passed. The prior exact-head hosted build
+sealed JS/WASM bytes and a local parser control accepted the exact Stage 0
+key; a subsequent local proof attempt trapped. This single-core candidate
+has not yet had its own hosted build. The source pin retains
+`browser_wasm_built: false` as a release HOLD flag. Publishing a draft PR
+does not merge it: a merge to
 `main` would trigger the repository's existing production and staging wallet
 deploy workflows, and needs separate approval. A qualified ceremony, final parameter/VK binding,
 independent review and wallet dispatch remain necessary for production.
