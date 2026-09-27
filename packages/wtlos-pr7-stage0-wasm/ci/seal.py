@@ -85,6 +85,11 @@ def main() -> int:
         "source": {
             "head": command("git", "rev-parse", "HEAD"),
             "git_tree": command("git", "rev-parse", "HEAD^{tree}"),
+            "proof_git_tree": command("git", "rev-parse", "HEAD:packages/wtlos-pr7-proof"),
+            "stage0_wasm_git_tree": command("git", "rev-parse", "HEAD:packages/wtlos-pr7-stage0-wasm"),
+            "workflow_git_blob": command(
+                "git", "rev-parse", "HEAD:.github/workflows/unsafe-pr7-stage0-browser.yml"
+            ),
             "vendored_pr7_git_tree": pin["vendored_pr7_git_tree"],
             "cargo_lock_sha256": sha256(CRATE / "Cargo.lock"),
             "adapter_sha256": sha256(CRATE / "src/lib.rs"),

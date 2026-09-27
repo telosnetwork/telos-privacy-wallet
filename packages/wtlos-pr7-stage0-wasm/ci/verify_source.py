@@ -11,6 +11,7 @@ import sys
 
 CRATE = Path(__file__).resolve().parents[1]
 ROOT = CRATE.parents[1]
+PROOF_CRATE = ROOT / "packages/wtlos-pr7-proof"
 EXPECTED_SOURCE_TREE = "7a22196e1d4a791b452a6140bdfa915298f3f1da"
 EXPECTED_WALLET_MAIN_BASE = "4354c9c279eb40c3a4164d97695985124285d9ce"
 EXPECTED_PROOF_DOMAIN_SHA256 = "b4a9cfc6c3c46231231d76028bdcfb290504d09f83617a3acfbf2d2df31e1918"
@@ -40,7 +41,43 @@ def sha256_tree(root: Path) -> str:
     return digest.hexdigest()
 
 
+def check_build_inputs() -> None:
+    """Bind the bytes being built to the recorded Git source identity."""
+    guarded_paths = (
+        ".github/workflows/unsafe-pr7-stage0-browser.yml",
+        "packages/libzeropool-pr7",
+        "packages/wtlos-pr7-proof",
+        "packages/wtlos-pr7-stage0-wasm",
+    )
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all", "--", *guarded_paths],
+        cwd=ROOT,
+        text=True,
+    ).strip()
+    assert not status, f"guarded build inputs are dirty or untracked:\n{status}"
+
+    path_attribute = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\]\s*$', re.MULTILINE)
+    for crate in (PROOF_CRATE, CRATE):
+        for source in sorted((crate / "src").rglob("*.rs")):
+            for relative in path_attribute.findall(source.read_text()):
+                target = (source.parent / relative).resolve()
+                assert target.is_relative_to(ROOT), (
+                    f"Rust #[path] input escapes repository: {source.relative_to(ROOT)} -> {target}"
+                )
+                assert target.is_file(), (
+                    f"missing Rust #[path] input: {source.relative_to(ROOT)} -> "
+                    f"{target.relative_to(ROOT)}"
+                )
+                subprocess.check_call(
+                    ["git", "ls-files", "--error-unmatch", str(target.relative_to(ROOT))],
+                    cwd=ROOT,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+
+
 def check_source() -> dict:
+    check_build_inputs()
     pin = json.loads((CRATE / "SOURCE-PIN.json").read_text())
     assert pin["schema"] == "telos-pr7-browser-stage0-adapter-v1"
     assert pin["wallet_main_base_commit"] == EXPECTED_WALLET_MAIN_BASE
