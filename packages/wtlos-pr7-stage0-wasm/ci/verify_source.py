@@ -32,13 +32,13 @@ EXPECTED_PHASE2_CERT_SHA256 = "1ba55687c39e283d0b796a4e1a21a228d586612a411186b67
 EXPECTED_PHASE2_MANIFEST_SHA256 = "f345a6eed23f2085452266ec26b0b2e6ec945031fd3230823f4f64162bf8d4b4"
 DISPATCH_GUARD_SHA256 = {
     "packages/zkbob-client-js/src/client.ts":
-        "0d039a169da448bf0fedc0603b7bae56391fbebf7bcc0098f20254032182594e",
+        "0c85c24a5e83c72387df104b80172364c2e593184edb09e041cf29644e144cb6",
     "packages/zkbob-client-js/src/worker.ts":
         "67fd9a4644a995bc858dca664c203aa3e538b51e9ef682163336ac395b2be7c8",
     "packages/zkbob-client-js/src/config.ts":
         "5c9707f116e8aa748d6fbfc42e818858cc6aa31b7c7d6aaa4535b3d5daca1586",
     "packages/zkbob-client-js/test/wtlos-pr7-prover-dispatch.test.cjs":
-        "7790bbd3edd9e7ce655e3a7057146d72f7c57a23f06c040c8c759f4618322745",
+        "3f9b1eb2ae7e490b8b6563fdfc02dab53d4f80b2f53e03c8ff1fc4d926a5b3c0",
 }
 
 

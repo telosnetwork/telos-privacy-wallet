@@ -113,6 +113,26 @@ enum ShieldedAddressFormat {
   Generic,
 }
 
+function assertWTLOSParamProfileBinding(pools: Pools, allParamsSet: Parameters): void {
+  for (const [alias, pool] of Object.entries(pools)) {
+    const paramsName = pool.parameters ?? GLOBAL_PARAMS_NAME;
+    const params = allParamsSet[paramsName];
+    // A source-tagged parameter set without a release profile must never
+    // reach delegated proving, even if a future WASM reports the right tree.
+    if (params?.wtlosCircuitSourceTree && !pool.wtlosReleaseProfile) {
+      throw new InternalError(`Pool ${alias} has PR7 parameters without a WTLOS-only release profile`);
+    }
+    if (!pool.wtlosReleaseProfile) continue;
+    if (!params || !params.transferParamsSha256 || !params.transferVkSha256 ||
+        !params.wtlosCircuitSourceTree ||
+        params.wtlosCircuitSourceTree.toLowerCase() !== pool.wtlosReleaseProfile.circuitSourceTree.toLowerCase() ||
+        params.transferParamsSha256.toLowerCase() !== pool.wtlosReleaseProfile.transferParamsSha256.toLowerCase() ||
+        params.transferVkSha256.toLowerCase() !== pool.wtlosReleaseProfile.transferVkSha256.toLowerCase()) {
+      throw new InternalError(`Pool ${alias} SNARK artifacts do not match its WTLOS-only release profile`);
+    }
+  }
+}
+
 export class ZkBobClient extends ZkBobProvider {
   // States for the current account in the different pools
   private zpStates: {[poolAlias: string]: ZkBobState} = {};
@@ -206,18 +226,7 @@ export class ZkBobClient extends ZkBobProvider {
       console.log(`The following SNARK parameters are supported: ${usedParams.join(", ")}`);
     }
 
-    for (const [alias, pool] of Object.entries(config.pools)) {
-      if (!pool.wtlosReleaseProfile) continue;
-      const paramsName = pool.parameters ?? GLOBAL_PARAMS_NAME;
-      const params = allParamsSet[paramsName];
-      if (!params || !params.transferParamsSha256 || !params.transferVkSha256 ||
-          !params.wtlosCircuitSourceTree ||
-          params.wtlosCircuitSourceTree.toLowerCase() !== pool.wtlosReleaseProfile.circuitSourceTree.toLowerCase() ||
-          params.transferParamsSha256.toLowerCase() !== pool.wtlosReleaseProfile.transferParamsSha256.toLowerCase() ||
-          params.transferVkSha256.toLowerCase() !== pool.wtlosReleaseProfile.transferVkSha256.toLowerCase()) {
-        throw new InternalError(`Pool ${alias} SNARK artifacts do not match its WTLOS-only release profile`);
-      }
-    }
+    assertWTLOSParamProfileBinding(config.pools, allParamsSet);
 
     let worker: any;
     worker = wrap(new Worker(new URL("./worker.js", import.meta.url), {type: "module"}));

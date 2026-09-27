@@ -31,6 +31,16 @@ function sourceMethod(filename, owner, name) {
   return matches[0].getText(ast);
 }
 
+function sourceFunction(filename, name) {
+  const file = path.join(__dirname, '../src', filename);
+  const source = fs.readFileSync(file, 'utf8');
+  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const matches = ast.statements.filter(node => ts.isFunctionDeclaration(node) &&
+    node.name?.text === name);
+  assert.equal(matches.length, 1, `${filename}: expected one ${name} function`);
+  return matches[0].getText(ast);
+}
+
 function compileHarness(source, wrapper, bindings) {
   const result = ts.transpileModule(wrapper(source), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -87,6 +97,36 @@ test('WTLOS profile rejects every client prover mode before a private witness le
   assert.equal(result.proof, 'proof');
   assert.equal(calls.delegated, 1);
   assert.equal(calls.verify, 1);
+});
+
+test('PR7 source-tagged params require a matching release profile before worker creation', () => {
+  const helperName = 'assertWTLOSParamProfileBinding';
+  const workerInit = sourceMethod('client.ts', 'class', 'workerInit');
+  assert.ok(workerInit.indexOf(`${helperName}(config.pools, allParamsSet)`) > 0);
+  assert.ok(workerInit.indexOf(`${helperName}(config.pools, allParamsSet)`) <
+    workerInit.indexOf('new Worker('));
+  const validate = compileHarness(
+    sourceFunction('client.ts', helperName),
+    declaration => `export const harness = ${declaration};`,
+    { GLOBAL_PARAMS_NAME: '__globalParams', InternalError: Error },
+  );
+  const tree = '7a22196e1d4a791b452a6140bdfa915298f3f1da';
+  const params = { wtlosCircuitSourceTree: tree,
+    transferParamsSha256: 'a'.repeat(64), transferVkSha256: 'b'.repeat(64) };
+  const release = { circuitSourceTree: tree,
+    transferParamsSha256: params.transferParamsSha256,
+    transferVkSha256: params.transferVkSha256 };
+  assert.throws(() => validate({ WTLOS: {
+    delegatedProverUrls: ['https://example.invalid'],
+  } }, { __globalParams: params }), /PR7 parameters without a WTLOS-only release profile/);
+  assert.throws(() => validate({ WTLOS: { wtlosReleaseProfile: release },
+    legacy: {} }, { __globalParams: params }), /PR7 parameters without a WTLOS-only release profile/);
+  assert.doesNotThrow(() => validate({ WTLOS: { wtlosReleaseProfile: release } },
+    { __globalParams: params }));
+  assert.throws(() => validate({ WTLOS: { wtlosReleaseProfile: release } },
+    { __globalParams: { ...params, transferVkSha256: 'c'.repeat(64) } }),
+  /SNARK artifacts do not match/);
+  assert.doesNotThrow(() => validate({ legacy: {} }, { __globalParams: {} }));
 });
 
 test('direct worker RPC rejects PR7 before legacy params or Proof.tx', async () => {
