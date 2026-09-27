@@ -19,6 +19,8 @@ EXPECTED_MPC_SHA256 = "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7
 EXPECTED_KEY_SHA256 = "44f01686622e4935d67a481a0668837afa5c6a8c54b1b9de03280744284d50c1"
 EXPECTED_KEY_BYTES = 72_498_469
 EXPECTED_BINDGEN_VERSION = "0.2.118"
+EXPECTED_CARGO_LOCK_SHA256 = "f63833eaf5cc76827bf468537ad97e963ad6d1e5db30d78ffbef4b91a26581fa"
+EXPECTED_PROOF_CARGO_LOCK_SHA256 = "d6df95a9c67b700271c755b6d12baacb8ade1f5af8a045c1859f33365d80180e"
 PHASE2_VENDOR = CRATE / "vendor/fawkes-crypto-phase2-0.2.3"
 PHASE2_ORIGIN = CRATE / "ci/phase2-origin.json"
 EXPECTED_PHASE2_COMMIT = "0d286cc94af78e96d3d1184b0e38246714afa838"
@@ -150,6 +152,10 @@ def check_source() -> dict:
     assert pin["wallet_main_base_commit"] == EXPECTED_WALLET_MAIN_BASE
     assert pin["vendored_pr7_git_tree"] == EXPECTED_SOURCE_TREE
     assert pin["proof_domain_codec_sha256"] == EXPECTED_PROOF_DOMAIN_SHA256
+    assert pin["cargo_lock_sha256"] == EXPECTED_CARGO_LOCK_SHA256
+    assert pin["proof_cargo_lock_sha256"] == EXPECTED_PROOF_CARGO_LOCK_SHA256
+    assert sha256(CRATE / "Cargo.lock") == EXPECTED_CARGO_LOCK_SHA256
+    assert sha256(PROOF_CRATE / "Cargo.lock") == EXPECTED_PROOF_CARGO_LOCK_SHA256
     proof = CRATE.parent / "wtlos-pr7-proof"
     assert sha256(proof / "src/domain.rs") == EXPECTED_PROOF_DOMAIN_SHA256
     proof_pin = json.loads((proof / "SOURCE-PIN.json").read_text())
@@ -179,7 +185,12 @@ def check_source() -> dict:
             versions.append(match.group(1))
     assert versions == [EXPECTED_BINDGEN_VERSION], f"wasm-bindgen lock drift: {versions}"
     crate_manifest = (CRATE / "Cargo.toml").read_text()
-    assert 'features = ["serde_support", "wasm"]' in crate_manifest, "WASM entropy feature missing"
+    proof_manifest = (PROOF_CRATE / "Cargo.toml").read_text()
+    assert 'features = ["in3out127"]' in crate_manifest and 'features = ["in3out127"]' in proof_manifest
+    assert "cli_libzeropool_setup" not in crate_manifest and "cli_libzeropool_setup" not in proof_manifest
+    assert 'features = ["serde_support", "wasm", "backend_bellman_groth16"]' in crate_manifest, (
+        "WASM entropy or Groth16 backend feature missing"
+    )
     lib = (CRATE / "src/lib.rs").read_text()
     assert EXPECTED_MPC_SHA256 in lib and EXPECTED_KEY_SHA256 in lib
     assert "pub struct UnsafeStage0Params" in lib and "unsafeStage0Tx" in lib

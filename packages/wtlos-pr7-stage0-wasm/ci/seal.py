@@ -97,6 +97,7 @@ def main() -> int:
             "phase2_origin_certificate_sha256": pin["phase2_origin_certificate_sha256"],
             "phase2_vendored_manifest_sha256": pin["phase2_vendored_manifest_sha256"],
             "cargo_lock_sha256": sha256(CRATE / "Cargo.lock"),
+            "proof_cargo_lock_sha256": sha256(CRATE.parent / "wtlos-pr7-proof/Cargo.lock"),
             "adapter_sha256": sha256(CRATE / "src/lib.rs"),
             "source_pin_sha256": sha256(CRATE / "SOURCE-PIN.json"),
             "proof_domain_codec_sha256": pin["proof_domain_codec_sha256"],

@@ -33,6 +33,13 @@ the lockfile override, and the unchanged PR7 tree. This dependency
 substitution still needs a hosted WASM build and a relation/key compatibility
 check; identical PR7 source bytes alone do not prove either.
 
+The browser and standalone proof manifests request only PR7's
+`in3out127` circuit feature, excluding the native setup CLI and its
+`clap-v3` dependency from the WASM build. The Stage 0 manifest explicitly
+enables Fawkes's Groth16 backend and WASM entropy features. PR7's locked
+Fawkes default also retains Groth16 for the standalone proof crate.
+The source guard pins the exact SHA-256 of both Cargo lockfiles.
+
 The opt-in `convert_exact_stage0_for_browser` test uses the exact sealed MPC
 file and VK JSON, replays PR7 transfer gate compression, and writes the
 converted key at a new path. Its output was independently hashed and the

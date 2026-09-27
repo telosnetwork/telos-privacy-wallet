@@ -9,8 +9,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wtlos-pr7-proof = { path = "../wtlos-pr7-proof" }
-libzeropool_pr7 = { package = "libzeropool-zkbob", path = "../libzeropool-pr7", default-features = false, features = ["in3out127", "cli_libzeropool_setup"] }
-fawkes-crypto-zkbob = { git = "https://github.com/zkBob/fawkes-crypto", branch = "master", version = "4.7.0", features = ["serde_support", "wasm"] }
+libzeropool_pr7 = { package = "libzeropool-zkbob", path = "../libzeropool-pr7", default-features = false, features = ["in3out127"] }
+fawkes-crypto-zkbob = { git = "https://github.com/zkBob/fawkes-crypto", branch = "master", version = "4.7.0", features = ["serde_support", "wasm", "backend_bellman_groth16"] }
 wasm-bindgen = "0.2.90"
 serde = { version = "1.0", features = ["derive"] }
 serde-wasm-bindgen = "0.6.3"
