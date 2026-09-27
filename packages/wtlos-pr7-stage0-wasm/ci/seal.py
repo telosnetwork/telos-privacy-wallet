@@ -95,8 +95,6 @@ def main() -> int:
             "adapter_sha256": sha256(CRATE / "src/lib.rs"),
             "source_pin_sha256": sha256(CRATE / "SOURCE-PIN.json"),
             "proof_domain_codec_sha256": pin["proof_domain_codec_sha256"],
-            "rustc_serialize_0_3_25_crate_sha256": pin["rustc_serialize_0_3_25_crate_sha256"],
-            "rustc_serialize_wasm_patch_tree_sha256": pin["rustc_serialize_wasm_patch_tree_sha256"],
             "proof_source_pin_sha256": sha256(CRATE.parent / "wtlos-pr7-proof/SOURCE-PIN.json"),
             "transfer_stage0_mpc_sha256": pin["transfer_stage0_mpc_sha256"],
             "converted_stage0_browser_key_sha256": pin["converted_stage0_browser_key_sha256"],

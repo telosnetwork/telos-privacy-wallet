@@ -3,8 +3,6 @@
   "wallet_main_base_commit": "4354c9c279eb40c3a4164d97695985124285d9ce",
   "vendored_pr7_git_tree": "7a22196e1d4a791b452a6140bdfa915298f3f1da",
   "proof_domain_codec_sha256": "b4a9cfc6c3c46231231d76028bdcfb290504d09f83617a3acfbf2d2df31e1918",
-  "rustc_serialize_0_3_25_crate_sha256": "fe834bc780604f4674073badbad26d7219cadfb4a2275802db12cbae17498401",
-  "rustc_serialize_wasm_patch_tree_sha256": "3260b2670be454fd82acd7bdf5fe773e8fd226f146c6e22336c02abd8ccd9bc9",
   "transfer_stage0_mpc_sha256": "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7843ba30",
   "transfer_stage0_vk_sha256": "9c829d89c9f094f472d10b9ea88dcf651c0f9ff8afa9630fea54196115e7ad82",
   "converted_stage0_browser_key_sha256": "44f01686622e4935d67a481a0668837afa5c6a8c54b1b9de03280744284d50c1",
