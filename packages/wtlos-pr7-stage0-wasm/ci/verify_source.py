@@ -14,6 +14,8 @@ ROOT = CRATE.parents[1]
 PROOF_CRATE = ROOT / "packages/wtlos-pr7-proof"
 EXPECTED_SOURCE_TREE = "7a22196e1d4a791b452a6140bdfa915298f3f1da"
 EXPECTED_WALLET_MAIN_BASE = "4354c9c279eb40c3a4164d97695985124285d9ce"
+EXPECTED_PR76_BROWSER_COMMIT = "ef96fba05c5d4e5ba2b656b319f5b2969df7714a"
+EXPECTED_WALLET_PROFILE_COMMIT = "c110f6eeb845081564040685dd07c8c1fe614cb3"
 EXPECTED_PROOF_DOMAIN_SHA256 = "b4a9cfc6c3c46231231d76028bdcfb290504d09f83617a3acfbf2d2df31e1918"
 EXPECTED_MPC_SHA256 = "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7843ba30"
 EXPECTED_KEY_SHA256 = "44f01686622e4935d67a481a0668837afa5c6a8c54b1b9de03280744284d50c1"
@@ -39,33 +41,48 @@ def sha256(path: Path) -> str:
 
 
 def check_build_inputs() -> None:
-    """Bind the bytes being built to the recorded Git source identity."""
-    allowed_changes = (
-        ".github/workflows/unsafe-pr7-stage0-browser.yml",
-        "packages/libzeropool-pr7/",
-        "packages/wtlos-pr7-proof/",
-        "packages/wtlos-pr7-stage0-wasm/",
-    )
+    """Bind the composed browser and wallet bytes to their reviewed parents."""
     status = subprocess.check_output(
         ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=ROOT,
         text=True,
     ).strip()
     assert not status, f"repository is dirty or has untracked files:\n{status}"
-    subprocess.check_call(
-        ["git", "merge-base", "--is-ancestor", EXPECTED_WALLET_MAIN_BASE, "HEAD"],
-        cwd=ROOT,
+    for parent in (EXPECTED_WALLET_MAIN_BASE, EXPECTED_PR76_BROWSER_COMMIT,
+                   EXPECTED_WALLET_PROFILE_COMMIT):
+        subprocess.check_call(["git", "merge-base", "--is-ancestor", parent, "HEAD"], cwd=ROOT)
+
+    def changes(revision: str) -> set[str]:
+        output = subprocess.check_output(
+            ["git", "diff", "--name-only", "-z", EXPECTED_WALLET_MAIN_BASE, revision, "--"],
+            cwd=ROOT,
+        )
+        return {raw.decode() for raw in output.split(b"\0") if raw}
+
+    def blob(revision: str, path: str) -> str:
+        return subprocess.check_output(
+            ["git", "rev-parse", f"{revision}:{path}"], cwd=ROOT, text=True
+        ).strip()
+
+    browser_changes = changes(EXPECTED_PR76_BROWSER_COMMIT)
+    wallet_changes = changes(EXPECTED_WALLET_PROFILE_COMMIT) - browser_changes
+    changed = changes("HEAD")
+    assert changed == browser_changes | wallet_changes, (
+        f"composed source path set drift: extra={sorted(changed - browser_changes - wallet_changes)}, "
+        f"missing={sorted((browser_changes | wallet_changes) - changed)}"
     )
-    changed = subprocess.check_output(
-        ["git", "diff", "--name-only", "-z", EXPECTED_WALLET_MAIN_BASE, "HEAD", "--"],
-        cwd=ROOT,
-    )
-    for raw in changed.split(b"\0"):
-        if raw:
-            path = raw.decode()
-            assert path == allowed_changes[0] or path.startswith(allowed_changes[1:]), (
-                f"change outside the reviewed test-only source boundary: {path}"
+    this_verifier = Path(__file__).relative_to(ROOT).as_posix()
+    for path in browser_changes:
+        # This verifier is deliberately extended for the composed source tree;
+        # the release receipt pins the resulting commit and full tree.
+        if path != this_verifier:
+            assert blob("HEAD", path) == blob(EXPECTED_PR76_BROWSER_COMMIT, path), (
+                f"PR76 browser source drift: {path}"
             )
+    for path in wallet_changes:
+        assert blob("HEAD", path) == blob(EXPECTED_WALLET_PROFILE_COMMIT, path), (
+            f"WTLOS wallet profile source drift: {path}"
+        )
 
     path_attribute = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\]\s*$', re.MULTILINE)
     for crate in (PROOF_CRATE, CRATE):
