@@ -13,6 +13,7 @@ CRATE = Path(__file__).resolve().parents[1]
 ROOT = CRATE.parents[1]
 EXPECTED_SOURCE_TREE = "7a22196e1d4a791b452a6140bdfa915298f3f1da"
 EXPECTED_WALLET_MAIN_BASE = "4354c9c279eb40c3a4164d97695985124285d9ce"
+EXPECTED_PROOF_DOMAIN_SHA256 = "b4a9cfc6c3c46231231d76028bdcfb290504d09f83617a3acfbf2d2df31e1918"
 EXPECTED_MPC_SHA256 = "d00b7238ab8787cb0d321e6bc910ea8cf1ec02bbf68e7a57555c11ff7843ba30"
 EXPECTED_KEY_SHA256 = "44f01686622e4935d67a481a0668837afa5c6a8c54b1b9de03280744284d50c1"
 EXPECTED_KEY_BYTES = 72_498_469
@@ -32,6 +33,13 @@ def check_source() -> dict:
     assert pin["schema"] == "telos-pr7-browser-stage0-adapter-v1"
     assert pin["wallet_main_base_commit"] == EXPECTED_WALLET_MAIN_BASE
     assert pin["vendored_pr7_git_tree"] == EXPECTED_SOURCE_TREE
+    assert pin["proof_domain_codec_sha256"] == EXPECTED_PROOF_DOMAIN_SHA256
+    proof = CRATE.parent / "wtlos-pr7-proof"
+    assert sha256(proof / "src/domain.rs") == EXPECTED_PROOF_DOMAIN_SHA256
+    proof_pin = json.loads((proof / "SOURCE-PIN.json").read_text())
+    assert proof_pin["domain_codec_origin_commit"] == "e6aa95a69e6246028f084c46f5258798bf7533ec"
+    assert proof_pin["domain_codec_origin_path"] == "packages/libzkbob-rs/src/wtlos_v1_domain.rs"
+    assert proof_pin["domain_codec_sha256"] == EXPECTED_PROOF_DOMAIN_SHA256
     assert pin["transfer_stage0_mpc_sha256"] == EXPECTED_MPC_SHA256
     assert pin["converted_stage0_browser_key_sha256"] == EXPECTED_KEY_SHA256
     for gate in (

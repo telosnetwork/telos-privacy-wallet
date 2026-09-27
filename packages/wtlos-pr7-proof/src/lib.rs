@@ -6,7 +6,6 @@
 
 pub const SOURCE_TREE: &str = "7a22196e1d4a791b452a6140bdfa915298f3f1da";
 
-#[path = "../../libzkbob-rs/src/wtlos_v1_domain.rs"]
 pub mod domain;
 
 use domain::{build_memo, TransactionKind};

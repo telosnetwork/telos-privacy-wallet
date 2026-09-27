@@ -5,6 +5,14 @@ V1 pool. It handles deposit, funded private transfer, and WTLOS withdrawal
 memos. It is separate from the wallet's 1.4.0 history code and is **not**
 connected to a wallet, relayer, RPC, or deployed pool.
 
+The self-contained memo-domain codec in `src/domain.rs` is byte-for-byte
+vendored from `packages/libzkbob-rs/src/wtlos_v1_domain.rs` at commit
+`e6aa95a69e6246028f084c46f5258798bf7533ec` (SHA-256
+`b4a9cfc6c3c46231231d76028bdcfb290504d09f83617a3acfbf2d2df31e1918`).
+The Stage 0 source check pins this copy and the proof package's source pin.
+The isolated package therefore compiles without adding wallet runtime files
+to this test-only branch.
+
 `packages/libzeropool-pr7` is the exact unmodified circuit source tree
 `7a22196e1d4a791b452a6140bdfa915298f3f1da` from draft circuits PR #7.
 The adapter finalizes the full `TPD1 || proxy` memo, hashes its exact calldata
