@@ -1,0 +1,26 @@
+[package]
+name = "wtlos-pr7-stage0-wasm"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wtlos-pr7-proof = { path = "../wtlos-pr7-proof" }
+libzeropool_pr7 = { package = "libzeropool-zkbob", path = "../libzeropool-pr7", default-features = false, features = ["in3out127"] }
+fawkes-crypto-zkbob = { git = "https://github.com/zkBob/fawkes-crypto", branch = "master", version = "4.7.0", features = ["serde_support", "wasm", "backend_bellman_groth16"] }
+wasm-bindgen = "0.2.90"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6.3"
+sha2 = "0.10.9"
+hex = "0.4.3"
+
+[dev-dependencies]
+serde_json = "1.0"
+brotli = "3.3.2"
+fawkes-crypto-phase2 = { git = "https://github.com/zkBob/phase2-bn254", branch = "master", package = "fawkes-crypto-phase2", version = "0.2.3" }
+
+[patch."https://github.com/zkBob/phase2-bn254"]
+fawkes-crypto-phase2 = { path = "vendor/fawkes-crypto-phase2-0.2.3" }

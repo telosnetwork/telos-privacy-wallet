@@ -62,12 +62,30 @@ pub struct UserAccount {
 impl UserAccount {
     #[wasm_bindgen(constructor)]
     /// Initializes UserAccount with a spending key that has to be an element of the prime field Fs (p = 6554484396890773809930967563523245729705921265872317281365359162392183254199).
-    pub fn new(sk: &[u8], pool_id: u32, is_obsolete_pool: bool, state: UserState) -> Result<UserAccount, JsValue> {
+    pub fn new(
+        sk: &[u8],
+        pool_id: u32,
+        is_obsolete_pool: bool,
+        state: UserState,
+        wtlos_v1_proxy: Option<Vec<u8>>,
+    ) -> Result<UserAccount, JsValue> {
         crate::utils::set_panic_hook();
         let sk = Num::<Fs>::from_uint(NumRepr(Uint::from_little_endian(sk)))
             .ok_or_else(|| js_err!("Invalid spending key"))?;
 
-        let account = NativeUserAccount::new(sk, pool_id, is_obsolete_pool, state.inner, POOL_PARAMS.clone());
+        let mut account = NativeUserAccount::new(
+            sk,
+            pool_id,
+            is_obsolete_pool,
+            state.inner,
+            POOL_PARAMS.clone(),
+        );
+        if let Some(proxy) = wtlos_v1_proxy {
+            let proxy: [u8; 20] = proxy
+                .try_into()
+                .map_err(|_| js_err!("WTLOS-only proxy must contain exactly 20 bytes"))?;
+            account.enable_wtlos_v1_domain(proxy);
+        }
 
         Ok(UserAccount {
             inner: Rc::new(RefCell::new(account)),
@@ -476,6 +494,7 @@ impl UserAccount {
             .unwrap()
             .into_iter()
             .map(|bulk| -> Vec<ParseResult> {
+                let wtlos_v1_proxy = self.inner.borrow().wtlos_v1_proxy();
                 let eta = &self.inner.borrow().keys.eta;
                 let kappa = &self.inner.borrow().keys.kappa;
                 let params = &self.inner.borrow().params;
@@ -490,7 +509,8 @@ impl UserAccount {
                             Some(&tx.tx_hash),
                             eta,
                             kappa,
-                            params
+                            params,
+                            wtlos_v1_proxy.as_ref()
                         ).ok()
                     })
                     .collect();

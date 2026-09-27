@@ -1,0 +1,79 @@
+name: UNSAFE_STAGE0_NO_GO composed wallet build evidence
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/unsafe-pr7-composed-wallet-build.yml
+      - .github/scripts/unsafe-pr7-composed-wallet-build.sh
+      - packages/libzkbob-rs-wasm/**
+      - packages/libzkbob-rs/**
+      - packages/zkbob-client-js/**
+      - packages/wtlos-pr7-stage0-wasm/**
+      - packages/wtlos-pr7-proof/**
+      - packages/libzeropool-pr7/**
+      - yarn.lock
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  composed-wallet-build:
+    name: Build-only WASM and wallet; release HOLD
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Check out candidate source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set runner-only build paths
+        run: |
+          echo "CARGO_TARGET_DIR=${RUNNER_TEMP}/composed-wallet-target" >> "${GITHUB_ENV}"
+          echo "WALLET_BUILD_EVIDENCE_DIR=${RUNNER_TEMP}/composed-wallet-evidence" >> "${GITHUB_ENV}"
+          echo "WASM_BINDGEN_BIN=${RUNNER_TEMP}/composed-wallet-tools/bin/wasm-bindgen" >> "${GITHUB_ENV}"
+
+      - name: Verify exact composed source and fail-closed release pins
+        run: python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
+
+      - name: Install exact Rust toolchains and WASM prerequisites
+        run: |
+          rustup toolchain install 1.94.0 --profile minimal --target wasm32-unknown-unknown
+          rustup toolchain install nightly-2026-05-17 --profile minimal \
+            --target wasm32-unknown-unknown --component rust-src
+          cargo +1.94.0 install wasm-bindgen-cli --version 0.2.106 --locked \
+            --root "${RUNNER_TEMP}/composed-wallet-tools"
+
+      - name: Install exact Node and Yarn versions
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+
+      - name: Install pinned Yarn CLI without workspace lifecycle scripts
+        run: |
+          npm install --prefix "${RUNNER_TEMP}/composed-wallet-yarn" \
+            yarn@1.22.22 --ignore-scripts --no-audit --no-fund
+          echo "${RUNNER_TEMP}/composed-wallet-yarn/node_modules/.bin" >> "${GITHUB_PATH}"
+
+      - name: Build both WASM variants, typecheck SDK and build browser wallet
+        run: bash .github/scripts/unsafe-pr7-composed-wallet-build.sh
+
+      - name: Upload generated packages and source-bound build manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: UNSAFE_STAGE0_NO_GO-composed-wallet-build-evidence
+          path: |
+            ${{ runner.temp }}/composed-wallet-evidence
+            packages/libzkbob-rs-wasm/web
+            packages/libzkbob-rs-wasm/web-mt
+            packages/zkbob-client-js/lib
+            apps/zktelos-wallet/build
+          if-no-files-found: warn
+          retention-days: 7
+          include-hidden-files: true

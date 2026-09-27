@@ -1,0 +1,63 @@
+name: Initial-position guard
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard-r1cs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Z3
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            https://github.com/Z3Prover/z3/releases/download/z3-4.16.0/z3-4.16.0-x64-glibc-2.39.zip \
+            --output "$RUNNER_TEMP/z3.zip"
+          printf '%s  %s\n' \
+            '7288c49a5bd6dbafd7b0b0d1f65956b91672da24b08f09242919af159be3418e' \
+            "$RUNNER_TEMP/z3.zip" | sha256sum --check --status
+          unzip -q "$RUNNER_TEMP/z3.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/z3-4.16.0-x64-glibc-2.39/bin" >> "$GITHUB_PATH"
+      - name: Rebuild guard R1CS and discharge symbolic checks
+        run: python3 -B formal/check_initial_position.py --check-export
+      - name: Check canonical eta boundary and alias witnesses
+        run: cargo test --locked --no-default-features --features in3out127 --test canonical_eta
+      - name: Reject native identity-recipient encryption
+        run: cargo test --locked --no-default-features --features in3out127 --test encryption
+      - name: Check nonidentity R1CS implications
+        run: python3 -B formal/check_nonidentity_guards.py
+      - name: Exercise funded-output, signed-memo, and signed-pool full-transfer witnesses
+        run: cargo test --locked --no-default-features --features cli_libzeropool_setup,in3out127 --test canonical_eta full_transfer_rejects_funded_identity_output_note
+      - name: Reject identity spending key and zero signature in the full transfer
+        run: cargo test --locked --no-default-features --features cli_libzeropool_setup,in3out127 --test identity_signature
+      - name: Exercise source-bound ceremony verifier guards
+        run: cargo test --locked --no-default-features --features cli_libzeropool_setup,in3out127 --bin libzeropool-setup
+      - name: Reject empty-block no-op tree updates
+        run: cargo test --locked --no-default-features --features cli_libzeropool_setup,in3out127 --test tree
+      - name: Rebuild both source-bound ceremony identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked --no-default-features --features cli_libzeropool_setup,in3out127 --example export_ceremony_identity > "$RUNNER_TEMP/transfer-identity.json"
+          cargo run --locked --no-default-features --features cli_libzeropool_setup,in3out127 --example export_ceremony_identity -- tree_update > "$RUNNER_TEMP/tree-identity.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          expected = {
+              'transfer': ('transfer-identity.json', 196327, 6, 196425, '6051176b4238978fc60d214db4b2755762b54b090ae4300e88b3e7371c27ce37'),
+              'tree_update': ('tree-identity.json', 29384, 4, 29463, '3787e5eee28cdf917c2cd854c71f99eaf31b7061d40cc9fc2ad4b6747508bad4'),
+          }
+          for circuit, (name, gates, inputs, aux, digest) in expected.items():
+              value = json.loads((Path(os.environ['RUNNER_TEMP']) / name).read_text())
+              assert (value['circuit'], value['num_gates'], value['num_inputs_including_one'], value['num_aux'], value['r1cs_sha256']) == (circuit, gates, inputs, aux, digest)
+          PY

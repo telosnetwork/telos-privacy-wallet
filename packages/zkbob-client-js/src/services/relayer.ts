@@ -9,6 +9,11 @@ import { Proof, TreeNode } from 'libzkbob-rs-wasm-web';
 import { CONSTANTS } from "../constants";
 import { NetworkBackend } from "../networks";
 import { ethers } from "ethers";
+import {
+  assertWTLOSReleaseProfileMatches,
+  WTLOSReleaseProfile,
+  WTLOS_ONLY_RELEASE_HEADER,
+} from '../wtlos-release-profile';
 
 const RELAYER_VERSION_REQUEST_THRESHOLD = 3600; // relayer's version expiration (in seconds)
 
@@ -154,8 +159,13 @@ export class ZkBobRelayer implements IZkBobService {
   protected primaryIdx?: number;  // use to prioritize a concrete URL
   protected supportId: string | undefined;
   protected relayerVersions = new Map<string, ServiceVersionFetch>(); // relayer version: URL -> version
+  protected wtlosReleaseProfile: WTLOSReleaseProfile | undefined;
 
-  public static create(relayerUrls: string[], supportId: string | undefined): ZkBobRelayer {
+  public static create(
+    relayerUrls: string[],
+    supportId: string | undefined,
+    wtlosReleaseProfile?: WTLOSReleaseProfile
+  ): ZkBobRelayer {
     if (relayerUrls.length == 0) {
       throw new InternalError('ZkBobRelayer: you should provide almost one relayer url');
     }
@@ -164,6 +174,7 @@ export class ZkBobRelayer implements IZkBobService {
 
     object.relayerUrls = relayerUrls;
     object.supportId = supportId;
+    object.wtlosReleaseProfile = wtlosReleaseProfile;
     object.curIdx = 0;
 
     return object;
@@ -285,6 +296,15 @@ export class ZkBobRelayer implements IZkBobService {
     const idx = this.safeIndex();
     const url = new URL('/sendTransactions', this.url(idx));
     const headers = defaultHeaders(this.supportId);
+    if (this.wtlosReleaseProfile) {
+      const profileUrl = new URL('/wtlos-only/release-profile', this.url(idx));
+      const actualProfile = await fetchJson(
+        profileUrl.toString(), {headers: defaultHeaders(this.supportId)}, this.type()
+      );
+      headers[WTLOS_ONLY_RELEASE_HEADER] = assertWTLOSReleaseProfileMatches(
+        actualProfile, this.wtlosReleaseProfile
+      );
+    }
 
     const res = await fetchJson(url.toString(), { method: 'POST', headers, body: JSON.stringify(txs) }, this.type());
     if (typeof res.jobId !== 'string') {

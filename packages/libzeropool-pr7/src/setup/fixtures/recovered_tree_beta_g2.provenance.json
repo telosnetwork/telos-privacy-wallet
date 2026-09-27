@@ -1,0 +1,13 @@
+{
+  "scope": "Public point copied unchanged from a recovered ceremony archive; input-validation rejection control only. Not a proof, setup, contribution or generated adversarial point.",
+  "preserved_header": "/Volumes/Extreme SSD/2026-09-17/new-chat/outputs/telos-privacy-independent-subgroup-check-20260921/headers/macanico_two-576.bin",
+  "preserved_header_sha256": "8505dcb0f75f86c52f5e8bd6542aa123e1748106607380e5f26449d57efc25ca",
+  "original_file_label": "macanico-dec02/tree_update_params.bin",
+  "original_file_bytes": 9656924,
+  "original_file_sha256": "b1f4f9ba681829f22086c045e37b96da90d2aafaab666f96762a5bda0e7aecf1",
+  "offset": 128,
+  "bytes": 128,
+  "sha256": "7fb1641a2702aa4873167c7d08be72b76977956f0f61334bbb437a8ac328e5bb",
+  "independent_validation_evidence": "outputs/telos-privacy-independent-subgroup-check-20260921/independent-tree-vk-result.json",
+  "expected_loader_error": "NotInSubgroup"
+}

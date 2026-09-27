@@ -43,6 +43,16 @@ const obj = {
     // Initialize parameters
     for (const [name, par] of Object.entries(params)) {
       const snarkParams = new SnarkParams(par);
+      const expectedWTLOSSource = snarkParams.wtlosCircuitSourceTree();
+      if (expectedWTLOSSource) {
+        const sourceReader = wasm.Proof?.wtlosPR7SourceTree;
+        if (typeof sourceReader !== 'function' ||
+            String(sourceReader()).toLowerCase() !== expectedWTLOSSource) {
+          throw new InternalError(
+            `WTLOS PR7 proving module ${expectedWTLOSSource} is not available in this wallet build`
+          );
+        }
+      }
       // VK is always needed to transact, so initiate its loading right now
       snarkParams.getVk().catch((err) => {
         console.warn(`Unable to fetch tx verification key (don't worry, it will refetched when needed): ${err.message}`);
@@ -94,9 +104,13 @@ const obj = {
     return wasm.Proof.verify(vk, inputs, proof);
   },
 
-  async parseTxs(sk: Uint8Array, txs: IndexedTx[]): Promise<ParseTxsResult> {
+  async parseTxs(
+    sk: Uint8Array,
+    txs: IndexedTx[],
+    wtlosV1Proxy?: Uint8Array
+  ): Promise<ParseTxsResult> {
     console.debug('Web worker: parseTxs');
-    const result = txParser.parseTxs(sk, txs)
+    const result = txParser.parseTxs(sk, txs, wtlosV1Proxy)
     sk.fill(0)
     return result;
   },
@@ -125,13 +139,20 @@ const obj = {
 
   // accountId is a unique string depends on network, poolId and sk
   // The local db will be named with accountId
-  async createAccount(accountId: string, sk: Uint8Array, poolId: number, isObsolete: boolean): Promise<void> {
+  async createAccount(
+    accountId: string,
+    sk: Uint8Array,
+    poolId: number,
+    isObsolete: boolean,
+    wtlosV1Proxy?: Uint8Array
+  ): Promise<void> {
     console.debug('Web worker: createAccount. is obsolete?', isObsolete);
     try {
       const state = await wasm.UserState.init(accountId);
-      zpAccounts[accountId] = new wasm.UserAccount(sk, poolId, isObsolete, state);
+      zpAccounts[accountId] = new wasm.UserAccount(sk, poolId, isObsolete, state, wtlosV1Proxy);
     } catch (e) {
       console.error(e);
+      throw e;
     }
   },
 
@@ -280,6 +301,9 @@ export const initParamsRafael = async (
 ) => {
   for (const [name, par] of Object.entries(params)) {
     const snarkParams = new SnarkParams(par);
+    if (snarkParams.wtlosCircuitSourceTree()) {
+      throw new InternalError('WTLOS PR7 proving is unavailable through the native-hardware compatibility path');
+    }
     // VK is always needed to transact, so initiate its loading right now
     snarkParams.getVk().catch((err) => {
       console.warn(`Unable to fetch tx verification key (don't worry, it will refetched when needed): ${err.message}`);

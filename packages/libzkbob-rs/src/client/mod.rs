@@ -31,6 +31,7 @@ use crate::{
     merkle::Hash,
     random::CustomRng,
     utils::{keccak256, zero_note, zero_proof},
+    wtlos_v1_domain::{build_memo as build_wtlos_v1_memo, DomainError, TransactionKind},
 };
 
 pub mod state;
@@ -51,6 +52,8 @@ pub enum CreateTxError {
     InsufficientEnergy(String, String),
     #[error("Failed to serialize transaction: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("WTLOS-only memo domain error: {0:?}")]
+    MemoDomainError(DomainError),
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -152,6 +155,7 @@ pub struct UserAccount<D: KeyValueDB, P: PoolParams> {
     pub params: P,
     pub state: State<D, P>,
     pub sign_callback: Option<Box<dyn Fn(&[u8]) -> Vec<u8>>>, // TODO: Find a way to make it async
+    wtlos_v1_proxy: Option<[u8; 20]>,
 }
 
 impl<D, P> UserAccount<D, P>
@@ -177,7 +181,18 @@ where
             state,
             params,
             sign_callback: None,
+            wtlos_v1_proxy: None,
         }
+    }
+
+    /// Enables the fresh WTLOS-only V1 memo domain for this account. This is a
+    /// per-account opt-in so existing pools retain their byte-for-byte format.
+    pub fn enable_wtlos_v1_domain(&mut self, proxy: [u8; 20]) {
+        self.wtlos_v1_proxy = Some(proxy);
+    }
+
+    pub fn wtlos_v1_proxy(&self) -> Option<[u8; 20]> {
+        self.wtlos_v1_proxy
     }
 
     /// Same as constructor but accepts arbitrary data as spending key.
@@ -372,6 +387,30 @@ where
                 .max()
                 .unwrap_or_else(|| self.state.tree.next_index())
         }));
+
+        let wtlos_domain = self
+            .wtlos_v1_proxy
+            .map(|proxy| {
+                if !self.is_obsolete_pool {
+                    return Err(DomainError::WrongFixedFields);
+                }
+                let (kind, operator) = match &tx {
+                    TxType::Deposit(operator, _, _) => (TransactionKind::Deposit, operator),
+                    TxType::Transfer(operator, _, _) => (TransactionKind::Transfer, operator),
+                    TxType::Withdraw(operator, _, _, _, _, _) => {
+                        (TransactionKind::Withdraw, operator)
+                    }
+                    TxType::DepositPermittable(_, _, _, _, _) => {
+                        return Err(DomainError::WrongFixedFields)
+                    }
+                };
+                if operator.proxy_address.as_slice() != &proxy[..] {
+                    return Err(DomainError::WrongProxy);
+                }
+                Ok((kind, proxy))
+            })
+            .transpose()
+            .map_err(CreateTxError::MemoDomainError)?;
 
         let (fee, tx_data) = {
             let mut tx_data: Vec<u8> = vec![];
@@ -646,20 +685,24 @@ where
         // TODO: prepare (encrypt) extra data
 
         // memo = tx_specific_data, ciphertext, extra_data
-        let mut memo_data = {
+        let memo_data = if let Some((kind, proxy)) = wtlos_domain {
+            build_wtlos_v1_memo(kind, &tx_data, &ciphertext, &proxy)
+                .map_err(CreateTxError::MemoDomainError)?
+        } else {
             let tx_data_size = tx_data.len();
             let ciphertext_size_size = if self.is_obsolete_pool { 0 } else { 2 };
             let ciphertext_size = ciphertext.len();
-            Vec::with_capacity(tx_data_size + ciphertext_size_size + ciphertext_size)
+            let mut memo =
+                Vec::with_capacity(tx_data_size + ciphertext_size_size + ciphertext_size);
+            #[allow(clippy::redundant_clone)]
+            memo.append(&mut tx_data.clone());
+            if !self.is_obsolete_pool {
+                // add message size for new memo format
+                memo.extend((ciphertext.len() as u16).to_be_bytes());
+            }
+            memo.extend(&ciphertext);
+            memo
         };
-
-        #[allow(clippy::redundant_clone)]
-        memo_data.append(&mut tx_data.clone());
-        if !self.is_obsolete_pool {
-            // add message size for new memo format
-            memo_data.extend((ciphertext.len() as u16).to_be_bytes());
-        }
-        memo_data.extend(&ciphertext);
 
         let memo_hash = keccak256(&memo_data);
         let memo = Num::from_uint_reduced(NumRepr(Uint::from_big_endian(&memo_hash)));

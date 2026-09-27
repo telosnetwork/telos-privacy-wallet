@@ -8,3 +8,4 @@ pub mod proof;
 pub mod random;
 pub mod sparse_array;
 pub mod utils;
+pub mod wtlos_v1_domain;
