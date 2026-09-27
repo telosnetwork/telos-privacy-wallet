@@ -21,6 +21,8 @@ use libzkbob_rs::{
 use serde::{Deserialize, Serialize};
 use std::iter::IntoIterator;
 use thiserror::Error;
+use std::borrow::Cow;
+use std::convert::TryInto;
 use wasm_bindgen::{prelude::*, JsCast};
 use web_sys::console;
 
@@ -38,6 +40,8 @@ pub enum ParseError {
     NoPrefix(u64),
     #[error("Incorrect memo prefix at index {0}: got {1} items, max allowed {2}")]
     IncorrectPrefix(u64, u32, u32),
+    #[error("Incorrect WTLOS-only memo domain at index {0}")]
+    MemoDomain(u64),
 }
 
 impl ParseError {
@@ -45,6 +49,7 @@ impl ParseError {
         match *self {
             ParseError::NoPrefix(idx) => idx,
             ParseError::IncorrectPrefix(idx, _, _) => idx,
+            ParseError::MemoDomain(idx) => idx,
         }
     }
 }
@@ -116,7 +121,12 @@ impl TxParser {
     }
 
     #[wasm_bindgen(js_name = "parseTxs")]
-    pub fn parse_txs(&self, sk: &[u8], txs: &JsValue) -> Result<ParseTxsResult, JsValue> {
+    pub fn parse_txs(
+        &self,
+        sk: &[u8],
+        txs: &JsValue,
+        wtlos_v1_proxy: Option<Vec<u8>>,
+    ) -> Result<ParseTxsResult, JsValue> {
         let sk = Num::<Fs>::from_uint(NumRepr(Uint::from_little_endian(sk)))
             .ok_or_else(|| js_err!("Invalid spending key"))?;
         let params = &self.params;
@@ -126,6 +136,10 @@ impl TxParser {
 
         let txs: Vec<IndexedTx> = serde_wasm_bindgen::from_value(txs.to_owned())
             .map_err(|err| js_err!(&err.to_string()))?;
+        let wtlos_v1_proxy: Option<[u8; 20]> = wtlos_v1_proxy
+            .map(|proxy| proxy.try_into()
+                .map_err(|_| js_err!("WTLOS-only proxy must contain exactly 20 bytes")))
+            .transpose()?;
 
         let parse_results: Vec<_> = vec_into_iter(txs)
             .map(|tx| -> ParseResult {
@@ -137,7 +151,10 @@ impl TxParser {
                 let memo = hex::decode(memo).unwrap();
                 let commitment = hex::decode(commitment).unwrap();
 
-                match parse_tx(index, &commitment, &memo, None, &eta, kappa, params) {
+                match parse_tx(
+                    index, &commitment, &memo, None, &eta, kappa, params,
+                    wtlos_v1_proxy.as_ref()
+                ) {
                     Ok(res) => res,
                     Err(err) => {
                         console::log_1(
@@ -269,7 +286,11 @@ pub fn parse_tx(
     eta: &Num<Fr>,
     kappa: &[u8; 32],
     params: &PoolParams,
+    wtlos_v1_proxy: Option<&[u8; 20]>,
 ) -> Result<ParseResult, ParseError> {
+    let memo = normalize_memo_domain(index, memo, wtlos_v1_proxy)?;
+    let memo = memo.as_ref();
+
     if memo.len() < 4 {
         return Err(ParseError::NoPrefix(index));
     }
@@ -476,5 +497,70 @@ pub fn parse_tx(
                 }
             }
         }
+    }
+}
+
+fn normalize_memo_domain<'a>(
+    index: u64,
+    memo: &'a Vec<u8>,
+    wtlos_v1_proxy: Option<&[u8; 20]>,
+) -> Result<Cow<'a, Vec<u8>>, ParseError> {
+    match wtlos_v1_proxy {
+        Some(proxy) => libzkbob_rs::wtlos_v1_domain::strip_domain(memo, proxy)
+            .map(Cow::Owned)
+            .map_err(|_| ParseError::MemoDomain(index)),
+        None => {
+            if memo.len() >= 8 && memo[4..8] == libzkbob_rs::wtlos_v1_domain::TAG {
+                Err(ParseError::MemoDomain(index))
+            } else {
+                Ok(Cow::Borrowed(memo))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod wtlos_domain_tests {
+    use super::*;
+
+    const PROXY: [u8; 20] = [0x11; 20];
+    const OTHER_PROXY: [u8; 20] = [0x22; 20];
+
+    fn legacy_memo() -> Vec<u8> {
+        let mut memo = vec![0u8; 4 + 32];
+        memo[0] = 1;
+        memo
+    }
+
+    #[test]
+    fn wtlos_history_requires_matching_pool_context() {
+        let legacy = legacy_memo();
+        let domain = libzkbob_rs::wtlos_v1_domain::add_domain(&legacy, &PROXY).unwrap();
+        assert_eq!(
+            normalize_memo_domain(0, &domain, Some(&PROXY)).unwrap().as_slice(),
+            legacy.as_slice()
+        );
+        assert!(matches!(
+            normalize_memo_domain(0, &domain, Some(&OTHER_PROXY)),
+            Err(ParseError::MemoDomain(0))
+        ));
+        assert!(matches!(
+            normalize_memo_domain(0, &domain, None),
+            Err(ParseError::MemoDomain(0))
+        ));
+    }
+
+    #[test]
+    fn legacy_parser_does_not_reinterpret_tpd1_collision() {
+        let mut legacy = legacy_memo();
+        legacy[4..8].copy_from_slice(&libzkbob_rs::wtlos_v1_domain::TAG);
+        assert!(matches!(
+            normalize_memo_domain(128, &legacy, None),
+            Err(ParseError::MemoDomain(128))
+        ));
+        assert!(matches!(
+            normalize_memo_domain(128, &legacy, Some(&PROXY)),
+            Err(ParseError::MemoDomain(128))
+        ));
     }
 }

@@ -1,0 +1,3 @@
+[submodule "fawkes-crypto"]
+	path = fawkes-crypto
+	url = https://github.com/zkBob/fawkes-crypto

@@ -113,6 +113,26 @@ enum ShieldedAddressFormat {
   Generic,
 }
 
+function assertWTLOSParamProfileBinding(pools: Pools, allParamsSet: Parameters): void {
+  for (const [alias, pool] of Object.entries(pools)) {
+    const paramsName = pool.parameters ?? GLOBAL_PARAMS_NAME;
+    const params = allParamsSet[paramsName];
+    // A source-tagged parameter set without a release profile must never
+    // reach delegated proving, even if a future WASM reports the right tree.
+    if (params?.wtlosCircuitSourceTree && !pool.wtlosReleaseProfile) {
+      throw new InternalError(`Pool ${alias} has PR7 parameters without a WTLOS-only release profile`);
+    }
+    if (!pool.wtlosReleaseProfile) continue;
+    if (!params || !params.transferParamsSha256 || !params.transferVkSha256 ||
+        !params.wtlosCircuitSourceTree ||
+        params.wtlosCircuitSourceTree.toLowerCase() !== pool.wtlosReleaseProfile.circuitSourceTree.toLowerCase() ||
+        params.transferParamsSha256.toLowerCase() !== pool.wtlosReleaseProfile.transferParamsSha256.toLowerCase() ||
+        params.transferVkSha256.toLowerCase() !== pool.wtlosReleaseProfile.transferVkSha256.toLowerCase()) {
+      throw new InternalError(`Pool ${alias} SNARK artifacts do not match its WTLOS-only release profile`);
+    }
+  }
+}
+
 export class ZkBobClient extends ZkBobProvider {
   // States for the current account in the different pools
   private zpStates: {[poolAlias: string]: ZkBobState} = {};
@@ -206,6 +226,8 @@ export class ZkBobClient extends ZkBobProvider {
       console.log(`The following SNARK parameters are supported: ${usedParams.join(", ")}`);
     }
 
+    assertWTLOSParamProfileBinding(config.pools, allParamsSet);
+
     let worker: any;
     worker = wrap(new Worker(new URL("./worker.js", import.meta.url), {type: "module"}));
     await worker.initWasm(allParamsSet, config.forcedMultithreading);
@@ -297,6 +319,11 @@ export class ZkBobClient extends ZkBobProvider {
     const network = this.network();
     const networkName = this.networkName();
     const addressPrefix = await this.addressPrefix().catch(() => undefined);
+    if (pool.wtlosReleaseProfile &&
+        (poolId.toString() !== pool.wtlosReleaseProfile.poolId ||
+         this.calldataVersion() !== TxCalldataVersion.V1)) {
+      throw new InternalError(`Pool ${newPoolAlias} on-chain ID or calldata version does not match its WTLOS-only release profile`);
+    }
 
     if (this.account) {
       this.monitoredJobs.clear();
@@ -335,7 +362,8 @@ export class ZkBobClient extends ZkBobProvider {
         this.calldataVersion() == TxCalldataVersion.V1,
         addressPrefix ? addressPrefix.prefix : undefined,
         pool.tokenAddress,
-        this.worker
+        this.worker,
+        pool.wtlosReleaseProfile ? network.addressToBytes(pool.wtlosReleaseProfile.poolAddress) : undefined
       );
       this.zpStates[newPoolAlias] = state;
       this.ddProcessors[newPoolAlias] = new DirectDepositProcessor(pool, network, state, this.subgraph());
@@ -467,7 +495,9 @@ export class ZkBobClient extends ZkBobProvider {
         networkName,
         poolId,
         this.calldataVersion() == TxCalldataVersion.V1,
-        this.worker
+        this.worker,
+        this.pool().wtlosReleaseProfile ?
+          network.addressToBytes(this.pool().wtlosReleaseProfile!.poolAddress) : undefined
       );
 
       // state will be removed after gift card redemption or on logout
@@ -1724,6 +1754,13 @@ export class ZkBobClient extends ZkBobProvider {
 
   // Universal proving routine
   private async proveTx(pub: any, sec: any, forcedMode: ProverMode | undefined = undefined): Promise<any> {
+    // A release profile identifies the PR7 relation, but this client still
+    // constructs legacy witness objects. Do not hand those objects to any
+    // local, native-hardware, or delegated prover until the PR7 path is wired.
+    if (this.pool().wtlosReleaseProfile) {
+      throw new InternalError('WTLOS PR7 proving is not wired in this wallet');
+    }
+
     const proverMode = forcedMode ?? this.getProverMode();
     const prover = this.prover();
     if ((proverMode == ProverMode.Delegated || proverMode == ProverMode.DelegatedWithFallback) && prover) {

@@ -1,10 +1,16 @@
 import { TxCalldataVersion } from "./tx";
 import { bufToHex } from "./utils";
 import { hash } from 'tweetnacl';
+import { WTLOSReleaseProfile } from './wtlos-release-profile';
 
 export interface SnarkConfigParams {
   transferParamsUrl: string;
   transferVkUrl: string;
+  transferParamsSha256?: string;
+  transferVkSha256?: string;
+  // A PR7 source identity is necessary but does not enable proving. The
+  // current wallet still rejects PR7 dispatch until its witness/prover API is wired.
+  wtlosCircuitSourceTree?: string;
 }
 
 export interface Chain {
@@ -45,6 +51,9 @@ export interface Pool {
   isNative?: boolean;
   ddSubgraph?: string;
   parameters?: string;
+  // Enables the fail-closed WTLOS-only release path. Every field must be an
+  // independently approved pin; the relayer must return an exact match.
+  wtlosReleaseProfile?: WTLOSReleaseProfile;
 }
 
 export enum ProverMode {
