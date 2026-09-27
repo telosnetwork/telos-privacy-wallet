@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "check": "tsc --noEmit",
+    "test:wtlos-release-profile": "node --test test/wtlos-release-profile-v2.test.cjs",
     "codegen": "graphclient build --dir ./src",
     "graphql-dev": "graphclient serve-dev --dir ./src",
     "build": "rm -rf lib/ && yarn tsc && yarn webpack --config webpack.worker.conf.js",

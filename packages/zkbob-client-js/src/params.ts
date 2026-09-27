@@ -1,6 +1,7 @@
 import { InternalError } from "./errors";
 import { FileCache } from "./file-cache";
 import { SnarkConfigParams } from "./config";
+import sha256 from 'fast-sha256';
 
 const MAX_VK_LOAD_ATTEMPTS = 3;
 
@@ -16,6 +17,9 @@ export enum LoadingStatus {
 export class SnarkParams {
     private paramUrl: string;
     private vkUrl: string;
+    private expectedParamsHash: string | undefined;
+    private expectedVkHash: string | undefined;
+    private expectedWTLOSCircuitSourceTree: string | undefined;
 
     private cache: FileCache;
 
@@ -31,11 +35,19 @@ export class SnarkParams {
         this.loadingStatus = LoadingStatus.NotStarted;
         this.paramUrl = params.transferParamsUrl;
         this.vkUrl = params.transferVkUrl;
+        this.expectedParamsHash = this.checkedExpectedHash(params.transferParamsSha256, 'params');
+        this.expectedVkHash = this.checkedExpectedHash(params.transferVkSha256, 'verification key');
+        if (params.wtlosCircuitSourceTree !== undefined &&
+            !/^[0-9a-fA-F]{40}$/.test(params.wtlosCircuitSourceTree)) {
+            throw new InternalError('Invalid WTLOS circuit source tree');
+        }
+        this.expectedWTLOSCircuitSourceTree = params.wtlosCircuitSourceTree?.toLowerCase();
     }
 
     public async getParams(wasm: any, expectedHash?: string): Promise<any> {
+        const effectiveHash = this.resolveExpectedHash(expectedHash);
         if (!this.isParamsReady()) {
-            this.loadParams(wasm, expectedHash);
+            this.loadParams(wasm, effectiveHash);
             return await this.loadingPromise;
         }
 
@@ -50,7 +62,13 @@ export class SnarkParams {
         const startTs = Date.now();
         while (!this.isVkReady() && attempts++ < MAX_VK_LOAD_ATTEMPTS) {
           try {
-            const vk = await (await fetch(this.vkUrl, { headers: { 'Cache-Control': 'no-cache' } })).json();
+            const response = await fetch(this.vkUrl, { headers: { 'Cache-Control': 'no-cache' } });
+            if (!response.ok) throw new InternalError(`VK request failed with status ${response.status}`);
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (this.expectedVkHash && this.sha256Hex(bytes) !== this.expectedVkHash) {
+                throw new InternalError('Verification key hash mismatch');
+            }
+            const vk = JSON.parse(new TextDecoder().decode(bytes));
             // verify VK structure
             if (typeof vk === 'object' && vk !== null &&
                 vk.hasOwnProperty('alpha') && Array.isArray(vk.alpha) &&
@@ -95,15 +113,14 @@ export class SnarkParams {
 
                 // check parameters hash if needed
                 if (txParamsData && expectedHash !== undefined) {
-                    let cachedHash = await cache.getHash(this.paramUrl);
-                    if (!cachedHash) {
-                        cachedHash = await cache.saveHash(this.paramUrl, txParamsData);
-                    }
-
+                    // Hash the retrieved bytes. The IndexedDB hash record is a
+                    // cache hint written separately and is not trusted for the
+                    // WTLOS release boundary.
+                    const cachedHash = await cache.calcHash(txParamsData);
                     if (cachedHash.toLowerCase() != expectedHash.toLowerCase()) {
                         // forget saved params in case of hash inconsistence
                         console.warn(`Hash of cached tx params (${cachedHash}) doesn't associated with provided (${this.paramUrl}).`);
-                        cache.remove(this.paramUrl);
+                        await cache.remove(this.paramUrl);
                         txParamsData = null;
                     }
                 }
@@ -113,6 +130,14 @@ export class SnarkParams {
                     console.time(`Download params`);
                     txParamsData = await cache.cache(this.paramUrl)
                         .finally(() => console.timeEnd(`Download params`));
+
+                    if (expectedHash !== undefined) {
+                        const downloadedHash = await cache.calcHash(txParamsData);
+                        if (downloadedHash.toLowerCase() !== expectedHash) {
+                            await cache.remove(this.paramUrl);
+                            throw new InternalError('Downloaded transaction params hash mismatch');
+                        }
+                    }
 
                     try {
                         console.time(`Creating Params object`);
@@ -153,6 +178,26 @@ export class SnarkParams {
         return this.vk !== undefined;
     }
 
+    private checkedExpectedHash(value: string | undefined, name: string): string | undefined {
+        if (value === undefined) return undefined;
+        if (!/^[0-9a-fA-F]{64}$/.test(value)) {
+            throw new InternalError(`Invalid expected ${name} SHA-256`);
+        }
+        return value.toLowerCase();
+    }
+
+    private resolveExpectedHash(value: string | undefined): string | undefined {
+        const requested = this.checkedExpectedHash(value, 'params');
+        if (this.expectedParamsHash && requested && this.expectedParamsHash !== requested) {
+            throw new InternalError('Conflicting transaction params hashes');
+        }
+        return this.expectedParamsHash ?? requested;
+    }
+
+    private sha256Hex(data: Uint8Array): string {
+        return [...sha256(data)].map(x => x.toString(16).padStart(2, '0')).join('');
+    }
+
     private async fileCache(): Promise<FileCache> {
         if (!this.cache) {
             this.cache = await FileCache.init();
@@ -160,5 +205,8 @@ export class SnarkParams {
 
         return this.cache;
     }
-}
 
+    public wtlosCircuitSourceTree(): string | undefined {
+        return this.expectedWTLOSCircuitSourceTree;
+    }
+}

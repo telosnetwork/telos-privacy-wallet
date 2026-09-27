@@ -107,6 +107,7 @@ export class ZkBobState {
   public history?: HistoryStorage; // should work synchronically with the state
   private ephemeralAddrPool?: EphemeralPool; // depends on sk so we placed it here
   private worker: any;
+  private wtlosV1Proxy?: Uint8Array;
   private updateStatePromise: Promise<boolean> | undefined;
   private syncStats: SyncStat[] = [];
   private skipColdStorage: boolean = false;
@@ -137,19 +138,21 @@ export class ZkBobState {
     isObsoletePool: boolean, // support for obsolete pools with old calldata format
     addressPrefix: string | undefined,
     tokenAddress: string,
-    worker: any
+    worker: any,
+    wtlosV1Proxy?: Uint8Array
   ): Promise<ZkBobState> {
     const zpState = new ZkBobState();
     zpState.sk = new Uint8Array(sk);
     zpState.network = network;
     zpState.subgraph = subgraph;
     zpState.birthIndex = birthIndex;
+    zpState.wtlosV1Proxy = wtlosV1Proxy ? new Uint8Array(wtlosV1Proxy) : undefined;
 
     const userId = bufToHex(hash(zpState.sk)).slice(0, 32);
     zpState.stateId = `${networkName}.${poolId.toString(16).padStart(6, "0")}.${userId}`; // database name identifier
     zpState.addressPrefix = addressPrefix;
 
-    await worker.createAccount(zpState.stateId, zpState.sk, poolId, isObsoletePool);
+    await worker.createAccount(zpState.stateId, zpState.sk, poolId, isObsoletePool, wtlosV1Proxy);
     zpState.worker = worker;
 
     zpState.history = await HistoryStorage.init(zpState.stateId, network, zpState, subgraph);
@@ -168,17 +171,19 @@ export class ZkBobState {
     networkName: string,
     poolId: number,
     isObsoletePool: boolean, // support for obsolete pools with old calldata format
-    worker: any
+    worker: any,
+    wtlosV1Proxy?: Uint8Array
   ): Promise<ZkBobState> {
     const zpState = new ZkBobState();
     zpState.sk = new Uint8Array(sk);
     zpState.network = network;
     zpState.birthIndex = birthIndex;
+    zpState.wtlosV1Proxy = wtlosV1Proxy ? new Uint8Array(wtlosV1Proxy) : undefined;
 
     const userId = bufToHex(hash(zpState.sk)).slice(0, 32);
     zpState.stateId = `${networkName}.${poolId.toString(16).padStart(6, "0")}.${userId}`; // database name identifier
 
-    await worker.createAccount(zpState.stateId, zpState.sk, poolId, isObsoletePool);
+    await worker.createAccount(zpState.stateId, zpState.sk, poolId, isObsoletePool, wtlosV1Proxy);
     zpState.worker = worker;
 
     return zpState;
@@ -657,7 +662,7 @@ export class ZkBobState {
 
     // process mined transactions
     if (batch.minedTxs.length > 0) {
-      const parseResult: ParseTxsResult = await this.worker.parseTxs(this.sk, batch.minedTxs);
+      const parseResult: ParseTxsResult = await this.worker.parseTxs(this.sk, batch.minedTxs, this.wtlosV1Proxy);
       const decryptedMemos = parseResult.decryptedMemos;
       batchState.set(batch.fromIndex, parseResult.stateUpdate);
       for (let decryptedMemoIndex = 0; decryptedMemoIndex < decryptedMemos.length; ++decryptedMemoIndex) {
@@ -670,7 +675,7 @@ export class ZkBobState {
 
     // process pending transactions from the optimisstic state
     if (batch.pendingTxs.length > 0) {
-      const parseResult: ParseTxsResult = await this.worker.parseTxs(this.sk, batch.pendingTxs);
+      const parseResult: ParseTxsResult = await this.worker.parseTxs(this.sk, batch.pendingTxs, this.wtlosV1Proxy);
       const decryptedPendingMemos = parseResult.decryptedMemos;
       for (let idx = 0; idx < decryptedPendingMemos.length; ++idx) {
         // save memos corresponding to the our account to restore history
@@ -720,7 +725,7 @@ export class ZkBobState {
           };
         });
 
-        const parseResult: ParseTxsResult = await this.worker.parseTxs(this.sk, indexedTxs);
+        const parseResult: ParseTxsResult = await this.worker.parseTxs(this.sk, indexedTxs, this.wtlosV1Proxy);
 
         return parseResult.stateUpdate;
       });
@@ -917,7 +922,7 @@ export class ZkBobState {
   }
 
   public async decryptMemos(tx: IndexedTx): Promise<ParseTxsResult> {
-    return (await this.worker.parseTxs(this.sk, [tx])).decryptedMemos;
+    return (await this.worker.parseTxs(this.sk, [tx], this.wtlosV1Proxy)).decryptedMemos;
   }
 
   public async extractDecryptKeys(treeIndex: number, memoblock: Uint8Array): Promise<TxMemoChunk[]> {

@@ -1,0 +1,29 @@
+{
+  "producerCommit": "5162caeb1cbea7c89a7855eeafed3631472c58e3",
+  "producerTree": "47bbb7b8e38f2576812110bf03e75b64af57dc44",
+  "producerModule": "zp-relayer/pool/WTLOSOnlyReleaseProfile.ts",
+  "producerModuleSha256": "fffd27c6b10b1b8d3dad3f53f4e03ae01fb192609d542f14ace6cd903825089a",
+  "profile": {
+    "schema": "telos-wtlos-only-release-v2",
+    "chainId": 40,
+    "poolAddress": "0x1111111111111111111111111111111111111111",
+    "poolId": "40003",
+    "tokenAddress": "0xD102cE6A4dB07D247fcc28F366A623Df0938CA9E",
+    "memoDomain": "TPD1",
+    "transactSelector": "0xaf989083",
+    "circuitSourceTree": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contractSourceTree": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "ceremonyManifestSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "implementationAddress": "0x2222222222222222222222222222222222222222",
+    "proxyCodeHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "implementationCodeHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "transferVerifier": "0x3333333333333333333333333333333333333333",
+    "transferVerifierCodeHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "treeVerifier": "0x4444444444444444444444444444444444444444",
+    "treeVerifierCodeHash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "transferParamsSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "transferVkSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "declaredRelayerCommit": "ffffffffffffffffffffffffffffffffffffffff"
+  },
+  "digest": "231d4ef867c414cee3f1cf70aa0f26e1d4a02069f9a27b9ab3768c8f165215a0"
+}

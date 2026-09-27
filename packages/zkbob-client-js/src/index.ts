@@ -19,6 +19,7 @@ export { TreeNode } from 'libzkbob-rs-wasm-web';
 export { EvmNetwork } from './networks/evm'
 export { deriveSpendingKeyZkBob } from './utils'
 export { IAddressComponents } from 'libzkbob-rs-wasm-web';
+export { WTLOSReleaseProfile } from './wtlos-release-profile';
 export { SignatureType } from './signers/abstract-signer'
 export { DirectDepositType } from './dd'
 export { ForcedExitState, CommittedForcedExit, FinalizedForcedExit } from './emergency'
