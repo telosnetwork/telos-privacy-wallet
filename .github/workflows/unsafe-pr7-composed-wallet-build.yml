@@ -91,7 +91,10 @@ jobs:
           echo "WASM_BINDGEN_BIN=${RUNNER_TEMP}/composed-wallet-tools/bin/wasm-bindgen" >> "${GITHUB_ENV}"
 
       - name: Verify exact composed source and fail-closed release pins
-        run: python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
+        run: |
+          actual="$(sha256sum packages/wtlos-pr7-stage0-wasm/ci/verify_source.py | cut -d ' ' -f1)"
+          test "${actual}" = '66d4ecc199553de6609b6afcbe68ce7130407813a15fc8ea49f532bb209b3d76'
+          python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
 
       - name: Install exact Rust toolchains and WASM prerequisites
         run: |
