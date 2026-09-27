@@ -40,6 +40,20 @@ DISPATCH_GUARD_SHA256 = {
     "packages/zkbob-client-js/test/wtlos-pr7-prover-dispatch.test.cjs":
         "3f9b1eb2ae7e490b8b6563fdfc02dab53d4f80b2f53e03c8ff1fc4d926a5b3c0",
 }
+WALLET_BRIDGE_SHA256 = {
+    "packages/wtlos-pr7-proof/Cargo.toml":
+        "173e2b5560bcbaaf0876b01dd0e5163f2e8cf8bf92cb062e6bb4cee4f45de3d1",
+    "packages/wtlos-pr7-proof/Cargo.lock":
+        "fb3ef167633f73985f67474330186960f4d48563a6bb5eb81fd506d439d97f4e",
+    "packages/wtlos-pr7-proof/README.md":
+        "8f23a22a5064f6e970de97d68bce6527388ef72645af4deaf8355cabbe3fb2f5",
+    "packages/wtlos-pr7-proof/src/lib.rs":
+        "296a31a97e88e2c01945436768048bb5a5177233bd12ad12d1e9066ff64f74ea",
+    "packages/wtlos-pr7-proof/tests/legacy_wallet_bridge.rs":
+        "34507a2b961ad129d2cff20ec0d254a3cc54b8d537652d846d49d09ed7563a9b",
+    "packages/wtlos-pr7-stage0-wasm/SOURCE-PIN.json":
+        "f3ff8ca5c099c5b8ee370876e65085ba59b4104b6fa9d31af620c6397f30cecf",
+}
 
 
 def sha256(path: Path) -> str:
@@ -81,7 +95,8 @@ def check_build_inputs() -> None:
         ".github/scripts/unsafe-pr7-composed-wallet-build.sh",
     }
     changed = changes("HEAD")
-    expected = browser_changes | wallet_changes | build_evidence_paths | set(DISPATCH_GUARD_SHA256)
+    expected = (browser_changes | wallet_changes | build_evidence_paths |
+                set(DISPATCH_GUARD_SHA256) | set(WALLET_BRIDGE_SHA256))
     assert changed == expected, (
         f"composed source path set drift: extra={sorted(changed - expected)}, "
         f"missing={sorted(expected - changed)}"
@@ -90,7 +105,7 @@ def check_build_inputs() -> None:
     for path in browser_changes:
         # This verifier is deliberately extended for the composed source tree;
         # the release receipt pins the resulting commit and full tree.
-        if path != this_verifier:
+        if path != this_verifier and path not in WALLET_BRIDGE_SHA256:
             assert blob("HEAD", path) == blob(EXPECTED_PR76_BROWSER_COMMIT, path), (
                 f"PR76 browser source drift: {path}"
             )
@@ -101,6 +116,8 @@ def check_build_inputs() -> None:
             )
     for path, digest in DISPATCH_GUARD_SHA256.items():
         assert sha256(ROOT / path) == digest, f"WTLOS dispatch guard drift: {path}"
+    for path, digest in WALLET_BRIDGE_SHA256.items():
+        assert sha256(ROOT / path) == digest, f"WTLOS offline wallet bridge drift: {path}"
 
     path_attribute = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\]\s*$', re.MULTILINE)
     for crate in (PROOF_CRATE, CRATE):
