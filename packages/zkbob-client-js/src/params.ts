@@ -4,6 +4,9 @@ import { SnarkConfigParams } from "./config";
 import sha256 from 'fast-sha256';
 
 const MAX_VK_LOAD_ATTEMPTS = 3;
+// Inspection resource bound only. The current test-only PR8 VKs are < 4 KiB;
+// this leaves room for final VK serialization without treating size as validity.
+const MAX_WTLOS_INSPECTION_VK_BYTES = 1024 * 1024;
 // Draft circuits PR8 identity. These pins label an offline byte inspection;
 // they do not authenticate a browser module, key ceremony, or proof capability.
 export const WTLOS_CIRCUIT_SOURCE_TREE = 'cde8d9501f3ade151299ac7c204fb22ffee07589';
@@ -67,8 +70,9 @@ export class SnarkParams {
     }
 
     // Inspect only caller-supplied bytes against configured hashes and the
-    // PR8 source pin. No module is accepted, no key is parsed, and this receipt
-    // must not be used as evidence of ceremony or browser-prover readiness.
+    // PR8 source pin. No proving parameter parser or module is accepted or
+    // invoked. VK JSON is parsed only for shape inspection and then discarded.
+    // This receipt is not evidence of ceremony or browser-prover readiness.
     public async inspectWTLOSArtifactsFromBytes(
         paramsBytes: Uint8Array,
         vkBytes: Uint8Array
@@ -95,7 +99,13 @@ export class SnarkParams {
             throw new InternalError('WTLOS circuit source is not the reviewed PR8 tree');
         }
 
-        if (!(paramsBytes instanceof Uint8Array) || !(vkBytes instanceof Uint8Array) ||
+        if (!(paramsBytes instanceof Uint8Array) || !(vkBytes instanceof Uint8Array)) {
+            throw new InternalError('WTLOS inspection requires parameter and VK byte arrays');
+        }
+        if (vkBytes.byteLength > MAX_WTLOS_INSPECTION_VK_BYTES) {
+            throw new InternalError('WTLOS verification key exceeds inspection resource bound');
+        }
+        if (
             this.sha256Hex(paramsBytes) !== paramsHash ||
             this.sha256Hex(vkBytes) !== vkHash) {
             throw new InternalError('WTLOS parameter or VK byte hash mismatch');

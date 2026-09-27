@@ -88,7 +88,7 @@ test('inspection rejects old source, changed bytes, and a caller-supplied module
   await assert.rejects(params.inspectWTLOSArtifactsFromBytes(key, vk, hostileModule),
     /exactly two byte arrays/);
   await assert.rejects(params.inspectWTLOSArtifactsFromBytes(hostileModule, vk),
-    /byte hash mismatch/);
+    /requires parameter and VK byte arrays/);
   assert.equal(parserCalls, 0);
 });
 
@@ -103,4 +103,11 @@ test('inspection requires complete pins and valid VK JSON', async () => {
     await assert.rejects(params.inspectWTLOSArtifactsFromBytes(key, bytes),
       /verification key/);
   }
+});
+
+test('inspection rejects an oversized VK before decoding even with a matching hash', async () => {
+  const oversizedVk = new Uint8Array(1024 * 1024 + 1);
+  const params = new SnarkParams(config(key, oversizedVk));
+  await assert.rejects(params.inspectWTLOSArtifactsFromBytes(key, oversizedVk),
+    /inspection resource bound/);
 });

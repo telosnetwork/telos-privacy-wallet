@@ -42,9 +42,9 @@ DISPATCH_GUARD_SHA256 = {
 }
 WTLOS_ARTIFACT_INSPECTION_SHA256 = {
     "packages/zkbob-client-js/src/params.ts":
-        "7c6679019f0085c2bd393a972c13b7ad4b9c35fe062c5040c5519226c67f8fec",
+        "2b45f406a9fa6cb80842057648b23e83955146220698dc48a22047e9eb275484",
     "packages/zkbob-client-js/test/wtlos-browser-artifact-inspection.test.cjs":
-        "6732f098ffe4cbe7245cfe34da1a775839a42554b58e2b9b0a9fd070d9ec5661",
+        "34db6567c813eec386cf93a79e52a94d584c1490ffad25c6d32d8aa0569b5666",
 }
 WALLET_BRIDGE_SHA256 = {
     "packages/wtlos-pr7-proof/Cargo.toml":
