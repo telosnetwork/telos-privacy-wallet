@@ -18,7 +18,7 @@ fi
 python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
 
 test "$(rustc +1.94.0 --version)" = 'rustc 1.94.0 (4a4ef493e 2026-03-02)'
-test "$(rustc +nightly-2026-05-17 --version)" = 'rustc 1.97.0-nightly (507271bc1 2026-05-17)'
+test "$(rustc +nightly-2026-05-17 --version)" = 'rustc 1.97.0-nightly (d3cd04068 2026-05-16)'
 test "$("$WASM_BINDGEN_BIN" --version)" = 'wasm-bindgen 0.2.106'
 test "$(node --version)" = 'v20.20.1'
 test "$(yarn --version)" = '1.22.22'
