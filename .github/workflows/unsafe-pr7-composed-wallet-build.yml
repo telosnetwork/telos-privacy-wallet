@@ -39,6 +39,10 @@ jobs:
           EXPECTED_CHECKOUT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           test "$(git rev-parse HEAD)" = "${EXPECTED_CHECKOUT_SHA}"
+          # The verifier exempts its own file from its source comparison.
+          # Pin those bytes in the workflow before executing them.
+          actual="$(sha256sum packages/wtlos-pr7-stage0-wasm/ci/verify_source.py | cut -d ' ' -f1)"
+          test "${actual}" = '66d4ecc199553de6609b6afcbe68ce7130407813a15fc8ea49f532bb209b3d76'
           python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
 
       - name: Use pinned Node runtime
