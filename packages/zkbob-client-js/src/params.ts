@@ -45,6 +45,12 @@ export class SnarkParams {
     }
 
     public async getParams(wasm: any, expectedHash?: string): Promise<any> {
+        // A PR7 key must never be parsed by the legacy WASM Params class, even
+        // when its byte hash matches the release profile. The PR7 loader below
+        // has a separate module capability and does not populate this cache.
+        if (this.expectedWTLOSCircuitSourceTree) {
+            throw new InternalError('WTLOS PR7 parameters require the source-bound browser loader');
+        }
         const effectiveHash = this.resolveExpectedHash(expectedHash);
         if (!this.isParamsReady()) {
             this.loadParams(wasm, effectiveHash);
@@ -52,6 +58,51 @@ export class SnarkParams {
         }
 
         return this.params;
+    }
+
+    // Source-bound PR7 artifact preflight. This does not enable proof dispatch:
+    // callers must still construct a PR7-native witness and satisfy the
+    // independent ceremony, runtime, and release-profile gates.
+    public async loadWTLOSPR7ArtifactsFromBytes(
+        module: any,
+        paramsBytes: Uint8Array,
+        vkBytes: Uint8Array
+    ): Promise<{params: any; verificationKey: any}> {
+        const source = this.expectedWTLOSCircuitSourceTree;
+        const paramsHash = this.expectedParamsHash;
+        const vkHash = this.expectedVkHash;
+        if (!source || !paramsHash || !vkHash) {
+            throw new InternalError('WTLOS PR7 source, params, and VK hashes are required');
+        }
+
+        // Production modules must expose this distinct PR7 capability. The
+        // unsafe Stage 0 fixture exposes UnsafeStage0Params instead and cannot
+        // satisfy this interface by accident.
+        const constructor = module?.WTLOSPR7Params;
+        if (typeof constructor?.sourceTree !== 'function' ||
+            typeof constructor?.parameterSha256 !== 'function' ||
+            typeof constructor?.fromBinary !== 'function' ||
+            constructor.sourceTree().toLowerCase() !== source ||
+            constructor.parameterSha256().toLowerCase() !== paramsHash) {
+            throw new InternalError('WTLOS PR7 browser module identity mismatch');
+        }
+        if (!(paramsBytes instanceof Uint8Array) || !(vkBytes instanceof Uint8Array) ||
+            this.sha256Hex(paramsBytes) !== paramsHash ||
+            this.sha256Hex(vkBytes) !== vkHash) {
+            throw new InternalError('WTLOS PR7 parameter or VK byte hash mismatch');
+        }
+        let verificationKey: any;
+        try {
+            verificationKey = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(vkBytes));
+        } catch {
+            throw new InternalError('Invalid WTLOS PR7 verification key JSON');
+        }
+        if (!verificationKey || typeof verificationKey !== 'object' ||
+            !['alpha', 'beta', 'gamma', 'delta', 'ic']
+                .every(field => Array.isArray(verificationKey[field]))) {
+            throw new InternalError('Invalid WTLOS PR7 verification key structure');
+        }
+        return {params: constructor.fromBinary(paramsBytes), verificationKey};
     }
 
     // VKs are much smaller than params so we can refetch it in case any errors
