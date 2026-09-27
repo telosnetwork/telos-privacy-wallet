@@ -4,9 +4,11 @@
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Optional
 
 spec = importlib.util.spec_from_file_location("verify_source", Path(__file__).with_name("verify_source.py"))
 assert spec is not None and spec.loader is not None
@@ -22,6 +24,26 @@ def command(*args: str) -> str:
     return subprocess.check_output(args, cwd=ROOT, text=True).strip()
 
 
+def event_pull_request_head() -> Optional[str]:
+    """Record and check the PR head independently of GitHub's merge ref."""
+    event_name = os.environ.get("GITHUB_EVENT_NAME")
+    if event_name is None:
+        return None
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if not event_path:
+        raise SystemExit("HOLD: GitHub event payload is missing")
+    event = json.loads(Path(event_path).read_text())
+    checkout_head = command("git", "rev-parse", "HEAD")
+    if event_name == "pull_request":
+        pr_head = event["pull_request"]["head"]["sha"]
+        if checkout_head != pr_head:
+            raise SystemExit("HOLD: checkout is not the pull-request head")
+        return pr_head
+    if event_name == "workflow_dispatch" and checkout_head != os.environ.get("GITHUB_SHA"):
+        raise SystemExit("HOLD: checkout is not the dispatched commit")
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("evidence_dir", type=Path)
@@ -31,6 +53,7 @@ def main() -> int:
     out = args.evidence_dir.resolve()
     bindgen = args.wasm_bindgen_bin.resolve()
     pin = check_source()
+    pr_head = event_pull_request_head()
     files = {
         "pkg/stage0.js": out / "pkg/stage0.js",
         "pkg/stage0_bg.wasm": out / "pkg/stage0_bg.wasm",
@@ -84,6 +107,7 @@ def main() -> int:
         },
         "source": {
             "head": command("git", "rev-parse", "HEAD"),
+            "event_pull_request_head": pr_head,
             "git_tree": command("git", "rev-parse", "HEAD^{tree}"),
             "proof_git_tree": command("git", "rev-parse", "HEAD:packages/wtlos-pr7-proof"),
             "stage0_wasm_git_tree": command("git", "rev-parse", "HEAD:packages/wtlos-pr7-stage0-wasm"),

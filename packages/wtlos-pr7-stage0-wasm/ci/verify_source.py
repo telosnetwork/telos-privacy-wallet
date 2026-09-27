@@ -40,18 +40,32 @@ def sha256(path: Path) -> str:
 
 def check_build_inputs() -> None:
     """Bind the bytes being built to the recorded Git source identity."""
-    guarded_paths = (
+    allowed_changes = (
         ".github/workflows/unsafe-pr7-stage0-browser.yml",
-        "packages/libzeropool-pr7",
-        "packages/wtlos-pr7-proof",
-        "packages/wtlos-pr7-stage0-wasm",
+        "packages/libzeropool-pr7/",
+        "packages/wtlos-pr7-proof/",
+        "packages/wtlos-pr7-stage0-wasm/",
     )
     status = subprocess.check_output(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all", "--", *guarded_paths],
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
         cwd=ROOT,
         text=True,
     ).strip()
-    assert not status, f"guarded build inputs are dirty or untracked:\n{status}"
+    assert not status, f"repository is dirty or has untracked files:\n{status}"
+    subprocess.check_call(
+        ["git", "merge-base", "--is-ancestor", EXPECTED_WALLET_MAIN_BASE, "HEAD"],
+        cwd=ROOT,
+    )
+    changed = subprocess.check_output(
+        ["git", "diff", "--name-only", "-z", EXPECTED_WALLET_MAIN_BASE, "HEAD", "--"],
+        cwd=ROOT,
+    )
+    for raw in changed.split(b"\0"):
+        if raw:
+            path = raw.decode()
+            assert path == allowed_changes[0] or path.startswith(allowed_changes[1:]), (
+                f"change outside the reviewed test-only source boundary: {path}"
+            )
 
     path_attribute = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\]\s*$', re.MULTILINE)
     for crate in (PROOF_CRATE, CRATE):

@@ -31,6 +31,8 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Set isolated runner paths
         run: |
@@ -39,7 +41,11 @@ jobs:
           echo "UNSAFE_PR7_CONVERTED_KEY=${RUNNER_TEMP}/wtlos-pr7-stage0-converted-key.bin" >> "${GITHUB_ENV}"
 
       - name: Verify source and release gate pins
-        run: python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
+        env:
+          EXPECTED_CHECKOUT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${EXPECTED_CHECKOUT_SHA}"
+          python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
 
       - name: Install pinned Rust toolchain and WASM target
         run: |
