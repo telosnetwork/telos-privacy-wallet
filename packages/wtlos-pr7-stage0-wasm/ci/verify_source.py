@@ -22,7 +22,7 @@ EXPECTED_KEY_SHA256 = "44f01686622e4935d67a481a0668837afa5c6a8c54b1b9de032807442
 EXPECTED_KEY_BYTES = 72_498_469
 EXPECTED_BINDGEN_VERSION = "0.2.118"
 EXPECTED_CARGO_LOCK_SHA256 = "f63833eaf5cc76827bf468537ad97e963ad6d1e5db30d78ffbef4b91a26581fa"
-EXPECTED_PROOF_CARGO_LOCK_SHA256 = "d6df95a9c67b700271c755b6d12baacb8ade1f5af8a045c1859f33365d80180e"
+EXPECTED_PROOF_CARGO_LOCK_SHA256 = "fb3ef167633f73985f67474330186960f4d48563a6bb5eb81fd506d439d97f4e"
 PHASE2_VENDOR = CRATE / "vendor/fawkes-crypto-phase2-0.2.3"
 PHASE2_ORIGIN = CRATE / "ci/phase2-origin.json"
 EXPECTED_PHASE2_COMMIT = "0d286cc94af78e96d3d1184b0e38246714afa838"
@@ -39,6 +39,20 @@ DISPATCH_GUARD_SHA256 = {
         "5c9707f116e8aa748d6fbfc42e818858cc6aa31b7c7d6aaa4535b3d5daca1586",
     "packages/zkbob-client-js/test/wtlos-pr7-prover-dispatch.test.cjs":
         "3f9b1eb2ae7e490b8b6563fdfc02dab53d4f80b2f53e03c8ff1fc4d926a5b3c0",
+}
+WALLET_BRIDGE_SHA256 = {
+    "packages/wtlos-pr7-proof/Cargo.toml":
+        "173e2b5560bcbaaf0876b01dd0e5163f2e8cf8bf92cb062e6bb4cee4f45de3d1",
+    "packages/wtlos-pr7-proof/Cargo.lock":
+        "fb3ef167633f73985f67474330186960f4d48563a6bb5eb81fd506d439d97f4e",
+    "packages/wtlos-pr7-proof/README.md":
+        "f67c24b971a0fbb256ce46c698a72c94d49ad8feab5253dd3f28256db160b850",
+    "packages/wtlos-pr7-proof/src/lib.rs":
+        "296a31a97e88e2c01945436768048bb5a5177233bd12ad12d1e9066ff64f74ea",
+    "packages/wtlos-pr7-proof/tests/legacy_wallet_bridge.rs":
+        "fbd5275cd61eee4fe097e9e45626a11ca02126d2816ce63d8ce5db062488b4d0",
+    "packages/wtlos-pr7-stage0-wasm/SOURCE-PIN.json":
+        "f3ff8ca5c099c5b8ee370876e65085ba59b4104b6fa9d31af620c6397f30cecf",
 }
 
 
@@ -81,7 +95,8 @@ def check_build_inputs() -> None:
         ".github/scripts/unsafe-pr7-composed-wallet-build.sh",
     }
     changed = changes("HEAD")
-    expected = browser_changes | wallet_changes | build_evidence_paths | set(DISPATCH_GUARD_SHA256)
+    expected = (browser_changes | wallet_changes | build_evidence_paths |
+                set(DISPATCH_GUARD_SHA256) | set(WALLET_BRIDGE_SHA256))
     assert changed == expected, (
         f"composed source path set drift: extra={sorted(changed - expected)}, "
         f"missing={sorted(expected - changed)}"
@@ -90,7 +105,7 @@ def check_build_inputs() -> None:
     for path in browser_changes:
         # This verifier is deliberately extended for the composed source tree;
         # the release receipt pins the resulting commit and full tree.
-        if path != this_verifier:
+        if path != this_verifier and path not in WALLET_BRIDGE_SHA256:
             assert blob("HEAD", path) == blob(EXPECTED_PR76_BROWSER_COMMIT, path), (
                 f"PR76 browser source drift: {path}"
             )
@@ -101,6 +116,8 @@ def check_build_inputs() -> None:
             )
     for path, digest in DISPATCH_GUARD_SHA256.items():
         assert sha256(ROOT / path) == digest, f"WTLOS dispatch guard drift: {path}"
+    for path, digest in WALLET_BRIDGE_SHA256.items():
+        assert sha256(ROOT / path) == digest, f"WTLOS offline wallet bridge drift: {path}"
 
     path_attribute = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\]\s*$', re.MULTILINE)
     for crate in (PROOF_CRATE, CRATE):

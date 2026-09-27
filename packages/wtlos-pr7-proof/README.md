@@ -5,6 +5,19 @@ V1 pool. It handles deposit, funded private transfer, and WTLOS withdrawal
 memos. It is separate from the wallet's 1.4.0 history code and is **not**
 connected to a wallet, relayer, RPC, or deployed pool.
 
+The isolated `tests/legacy_wallet_bridge.rs` experiment now constructs a
+deposit with the actual legacy `libzkbob-rs::UserAccount` and in-memory wallet
+state. It translates the serialized public/secret witness into the separate
+PR7 type universe, derives the signing scalar only inside the Rust test,
+recomputes PR7's canonical-eta/physical-position nullifier, and lets this
+adapter reencrypt the V1 memo and sign the memo-and-pool-bound PR7 hash. The
+normal test checks this conversion and wrong-nullifier rejection without a
+proving key. Its ignored, opt-in test accepts only the exact zero-contribution
+Stage 0 converted key digest, constructs a Groth16 deposit proof and verifies
+it with that key's VK; changed public inputs must reject. The production
+`UserAccount` and wallet worker do not call this bridge. Neither a funded
+transfer nor a withdrawal has been generated from actual wallet state yet.
+
 The self-contained memo-domain codec in `src/domain.rs` is byte-for-byte
 vendored from `packages/libzkbob-rs/src/wtlos_v1_domain.rs` at commit
 `e6aa95a69e6246028f084c46f5258798bf7533ec` (SHA-256
@@ -38,7 +51,18 @@ Run ordinary tests with:
 ```sh
 CARGO_TARGET_DIR=/private/tmp/telos-pr7-tree-guard-20260925/target \
   CARGO_INCREMENTAL=0 cargo test --offline --locked \
-  --manifest-path packages/wtlos-pr7-proof/Cargo.toml --lib
+  --manifest-path packages/wtlos-pr7-proof/Cargo.toml
+```
+
+With the exact, independently sealed **unqualified** converted transfer key,
+run the wallet-builder proof experiment explicitly:
+
+```sh
+UNSAFE_PR7_CONVERTED_KEY=/path/to/UNSAFE_stage0_converted_transfer.bin \
+  UNSAFE_PR7_STAGE0_TRANSFER_VK=/path/to/current_source_transfer_vk.json \
+  cargo test --offline --locked \
+  --manifest-path packages/wtlos-pr7-proof/Cargo.toml \
+  --test legacy_wallet_bridge -- --ignored --nocapture
 ```
 
 The ignored proof test additionally requires the sealed first-deposit proof,

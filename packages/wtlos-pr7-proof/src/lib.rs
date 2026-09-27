@@ -27,8 +27,8 @@ use libzeropool_pr7::{
         key::{derive_key_a, derive_key_eta},
         params::PoolParams,
         tx::{
-            make_delta, out_commitment_hash, parse_delta, tx_hash, tx_sign, tx_verify, TransferPub,
-            TransferSec,
+            make_delta, nullifier, out_commitment_hash, parse_delta, tx_hash, tx_sign, tx_verify,
+            TransferPub, TransferSec,
         },
     },
     POOL_PARAMS,
@@ -100,6 +100,8 @@ pub enum AdapterError {
     OutputNoteGap,
     WrongOutputCommitment,
     WrongSigningKey,
+    WrongNullifier,
+    InitialAccountNonZeroPath,
     InvalidSignature,
     RandomnessUnavailable,
     Domain(domain::DomainError),
@@ -262,6 +264,36 @@ fn finalize_signed_transaction(
     let eta = derive_key_eta(a.x, params);
     if eta.to_other_reduced() == Num::<Fs>::ZERO {
         return Err(AdapterError::WrongSigningKey);
+    }
+
+    // The legacy wallet builder signs a different transaction hash and may
+    // derive a different nullifier. Reject that witness before loading a
+    // proving key rather than spending time proving a false PR7 relation.
+    // PR7's circuit interprets Merkle path bits least-significant first.
+    let account_path_index = secret
+        .in_proof
+        .0
+        .path
+        .iter()
+        .enumerate()
+        .fold(0u64, |index, (bit, set)| index | (u64::from(*set) << bit));
+    let input_account = secret.tx.input.0;
+    let is_initial = input_account.i.to_num() == Num::ZERO
+        && input_account.b.to_num() == Num::ZERO
+        && input_account.e.to_num() == Num::ZERO
+        && input_account.d.to_num() == Num::from(pool_id);
+    if is_initial && account_path_index != 0 {
+        return Err(AdapterError::InitialAccountNonZeroPath);
+    }
+    if public.nullifier
+        != nullifier(
+            input_account.hash(params),
+            eta,
+            Num::from(account_path_index),
+            params,
+        )
+    {
+        return Err(AdapterError::WrongNullifier);
     }
 
     let out_account = secret.tx.output.0;
@@ -588,6 +620,20 @@ mod tests {
         ));
 
         let mut value = witness();
+        value.public.nullifier += Num::ONE;
+        assert!(matches!(
+            finalize_deposit(value),
+            Err(AdapterError::WrongNullifier)
+        ));
+
+        let mut value = witness();
+        value.secret.in_proof.0.path[0] = true;
+        assert!(matches!(
+            finalize_deposit(value),
+            Err(AdapterError::InitialAccountNonZeroPath)
+        ));
+
+        let mut value = witness();
         value.pool_id = 0;
         assert!(matches!(
             finalize_deposit(value),
@@ -707,6 +753,12 @@ mod tests {
         private.public.delta =
             make_delta(Num::ZERO, Num::ZERO, Num::from(128u64), Num::from(POOL_ID));
         private.secret.tx.input.0.b = BoundedNum::new(Num::from(5u64));
+        private.public.nullifier = nullifier(
+            private.secret.tx.input.0.hash(&*POOL_PARAMS),
+            derive_key_eta(private.secret.eddsa_a, &*POOL_PARAMS),
+            Num::ZERO,
+            &*POOL_PARAMS,
+        );
         private.secret.tx.output.1[1].b = BoundedNum::new(Num::ONE);
         assert!(matches!(
             finalize_private_transfer(PrivateTransferWitness {
