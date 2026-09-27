@@ -21,7 +21,12 @@ browser proof validation here. A prior exact-head hosted build and local
 Chromium key-parser control produced test-only JS/WASM evidence. The separate
 `browser-test/prove-stage0.mjs` diagnostic uses a sealed synthetic deposit
 witness; that earlier WASM trapped in Bellman CE's multicore waiter during
-proof construction, before any proof could be verified.
+proof construction, before any proof could be verified. The diagnostic
+requires the exact hosted artifact ZIP and its SHA-256 independently read
+from GitHub; it checks the ZIP's `MANIFEST.json`, internal seal, source
+HEAD/tree, and extracted JS/WASM. It rejects a witness other than the
+sealed synthetic deposit tuple, bounds proof construction to 10 minutes,
+and writes a new result file without overwriting evidence.
 
 The isolated browser build uses a local Phase 2 dependency variant to avoid
 the native-only `rust-crypto` and `rustc-serialize` packages on
@@ -84,3 +89,24 @@ does not merge it: a merge to
 `main` would trigger the repository's existing production and staging wallet
 deploy workflows, and needs separate approval. A qualified ceremony, final parameter/VK binding,
 independent review and wallet dispatch remain necessary for production.
+
+Run the diagnostic only in a clean isolated checkout at the same exact
+commit named by the hosted artifact. Supply the unqualified converted Stage 0
+key and the sealed synthetic `0_deposit/transfer_object.json` from the
+current-source rehearsal. The browser server binds only to `127.0.0.1` and
+blocks external requests. For example:
+
+```sh
+node packages/wtlos-pr7-stage0-wasm/browser-test/prove-stage0.mjs \
+  /path/to/hosted-artifact/pkg \
+  /path/to/converted-unsafe-stage0-key.bin \
+  /path/to/sealed-current-source-rehearsal/full-flow-witness/0_deposit/transfer_object.json \
+  /path/to/hosted-artifact.zip \
+  SHA256_FROM_INDEPENDENT_GITHUB_ARTIFACT_READBACK \
+  /path/to/new-UNSAFE_STAGE0_NO_GO-result.json
+```
+
+The output deliberately says `verified_against_vk: false`. If a proof is
+actually produced, extract `.result.proof` and `.result.inputs` and verify
+them against the source-matched Stage 0 transfer VK with the preserved PR7
+CLI. A generated proof alone is not a pass.
