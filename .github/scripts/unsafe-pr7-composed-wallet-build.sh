@@ -17,6 +17,7 @@ if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
 fi
 python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
 
+set -x
 test "$(rustc +1.94.0 --version)" = 'rustc 1.94.0 (4a4ef493e 2026-03-02)'
 test "$(rustc +nightly-2026-05-17 --version)" = 'rustc 1.97.0-nightly (d3cd04068 2026-05-16)'
 test "$("$WASM_BINDGEN_BIN" --version)" = 'wasm-bindgen 0.2.106'
@@ -24,7 +25,8 @@ test "$(node --version)" = 'v20.20.1'
 test "$(yarn --version)" = '1.22.22'
 rustup target list --installed --toolchain 1.94.0 | grep -qx wasm32-unknown-unknown
 rustup target list --installed --toolchain nightly-2026-05-17 | grep -qx wasm32-unknown-unknown
-rustup component list --installed --toolchain nightly-2026-05-17 | grep -q '^rust-src '
+rustup component list --installed --toolchain nightly-2026-05-17 | grep -Eq '^rust-src($|[-[:space:]])'
+set +x
 
 WASM_CRATE="$ROOT/packages/libzkbob-rs-wasm"
 WASM_IMAGE="$CARGO_TARGET_DIR/wasm32-unknown-unknown/release/libzkbob_rs_wasm_web.wasm"
