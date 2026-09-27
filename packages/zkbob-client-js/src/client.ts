@@ -206,6 +206,19 @@ export class ZkBobClient extends ZkBobProvider {
       console.log(`The following SNARK parameters are supported: ${usedParams.join(", ")}`);
     }
 
+    for (const [alias, pool] of Object.entries(config.pools)) {
+      if (!pool.wtlosReleaseProfile) continue;
+      const paramsName = pool.parameters ?? GLOBAL_PARAMS_NAME;
+      const params = allParamsSet[paramsName];
+      if (!params || !params.transferParamsSha256 || !params.transferVkSha256 ||
+          !params.wtlosCircuitSourceTree ||
+          params.wtlosCircuitSourceTree.toLowerCase() !== pool.wtlosReleaseProfile.circuitSourceTree.toLowerCase() ||
+          params.transferParamsSha256.toLowerCase() !== pool.wtlosReleaseProfile.transferParamsSha256.toLowerCase() ||
+          params.transferVkSha256.toLowerCase() !== pool.wtlosReleaseProfile.transferVkSha256.toLowerCase()) {
+        throw new InternalError(`Pool ${alias} SNARK artifacts do not match its WTLOS-only release profile`);
+      }
+    }
+
     let worker: any;
     worker = wrap(new Worker(new URL("./worker.js", import.meta.url), {type: "module"}));
     await worker.initWasm(allParamsSet, config.forcedMultithreading);
@@ -297,6 +310,11 @@ export class ZkBobClient extends ZkBobProvider {
     const network = this.network();
     const networkName = this.networkName();
     const addressPrefix = await this.addressPrefix().catch(() => undefined);
+    if (pool.wtlosReleaseProfile &&
+        (poolId.toString() !== pool.wtlosReleaseProfile.poolId ||
+         this.calldataVersion() !== TxCalldataVersion.V1)) {
+      throw new InternalError(`Pool ${newPoolAlias} on-chain ID or calldata version does not match its WTLOS-only release profile`);
+    }
 
     if (this.account) {
       this.monitoredJobs.clear();
@@ -335,7 +353,8 @@ export class ZkBobClient extends ZkBobProvider {
         this.calldataVersion() == TxCalldataVersion.V1,
         addressPrefix ? addressPrefix.prefix : undefined,
         pool.tokenAddress,
-        this.worker
+        this.worker,
+        pool.wtlosReleaseProfile ? network.addressToBytes(pool.wtlosReleaseProfile.poolAddress) : undefined
       );
       this.zpStates[newPoolAlias] = state;
       this.ddProcessors[newPoolAlias] = new DirectDepositProcessor(pool, network, state, this.subgraph());
@@ -467,7 +486,9 @@ export class ZkBobClient extends ZkBobProvider {
         networkName,
         poolId,
         this.calldataVersion() == TxCalldataVersion.V1,
-        this.worker
+        this.worker,
+        this.pool().wtlosReleaseProfile ?
+          network.addressToBytes(this.pool().wtlosReleaseProfile!.poolAddress) : undefined
       );
 
       // state will be removed after gift card redemption or on logout

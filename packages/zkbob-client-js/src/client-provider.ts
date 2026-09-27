@@ -12,6 +12,7 @@ import { bufToHex, HexStringReader, HexStringWriter, hexToBuf, truncateHexPrefix
 import { RegularTxType, TxCalldataVersion } from "./tx";
 import { ZkBobSubgraph } from "./subgraph";
 import { hardcodedPrefixes } from "./address-prefixes";
+import { canonicalWTLOSReleaseProfile } from './wtlos-release-profile';
 
 const bs58 = require('bs58')
 
@@ -166,9 +167,20 @@ export class ZkBobProvider {
             if (hasRelayers == hasProxies) {
                 throw new InternalError(`Pool ${alias} should define at least a relayer OR proxy (not both)`);
             }
+            const wtlosReleaseProfile = pool.wtlosReleaseProfile ?
+                    canonicalWTLOSReleaseProfile(pool.wtlosReleaseProfile) : undefined;
             this.sequencers[alias] = hasRelayers ? 
-                    ZkBobRelayer.create(pool.relayerUrls as string[], supportId) :
+                    ZkBobRelayer.create(pool.relayerUrls as string[], supportId, wtlosReleaseProfile) :
                     ZkBobProxy.create(pool.proxyUrls as string[], supportId);
+
+            if (wtlosReleaseProfile) {
+                const profile = wtlosReleaseProfile;
+                if (!hasRelayers || pool.chainId !== 40 ||
+                    pool.poolAddress.toLowerCase() !== profile.poolAddress.toLowerCase() ||
+                    pool.tokenAddress.toLowerCase() !== profile.tokenAddress.toLowerCase()) {
+                    throw new InternalError(`Pool ${alias} does not match its WTLOS-only release profile`);
+                }
+            }
 
             // create a delegated prover service if url presented
             if (pool.delegatedProverUrls && pool.delegatedProverUrls.length > 0) {
