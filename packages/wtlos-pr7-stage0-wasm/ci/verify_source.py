@@ -30,6 +30,16 @@ EXPECTED_PHASE2_ORIGIN_TREE = "7f15bbc81038e51c6828920a9424ef16cb0dbddb"
 EXPECTED_PHASE2_VENDOR_TREE = "d7630c115be08f1aad06f66b07b23d243e81bffd"
 EXPECTED_PHASE2_CERT_SHA256 = "1ba55687c39e283d0b796a4e1a21a228d586612a411186b67e4a2502395c4612"
 EXPECTED_PHASE2_MANIFEST_SHA256 = "f345a6eed23f2085452266ec26b0b2e6ec945031fd3230823f4f64162bf8d4b4"
+DISPATCH_GUARD_SHA256 = {
+    "packages/zkbob-client-js/src/client.ts":
+        "0d039a169da448bf0fedc0603b7bae56391fbebf7bcc0098f20254032182594e",
+    "packages/zkbob-client-js/src/worker.ts":
+        "67fd9a4644a995bc858dca664c203aa3e538b51e9ef682163336ac395b2be7c8",
+    "packages/zkbob-client-js/src/config.ts":
+        "5c9707f116e8aa748d6fbfc42e818858cc6aa31b7c7d6aaa4535b3d5daca1586",
+    "packages/zkbob-client-js/test/wtlos-pr7-prover-dispatch.test.cjs":
+        "7790bbd3edd9e7ce655e3a7057146d72f7c57a23f06c040c8c759f4618322745",
+}
 
 
 def sha256(path: Path) -> str:
@@ -71,7 +81,7 @@ def check_build_inputs() -> None:
         ".github/scripts/unsafe-pr7-composed-wallet-build.sh",
     }
     changed = changes("HEAD")
-    expected = browser_changes | wallet_changes | build_evidence_paths
+    expected = browser_changes | wallet_changes | build_evidence_paths | set(DISPATCH_GUARD_SHA256)
     assert changed == expected, (
         f"composed source path set drift: extra={sorted(changed - expected)}, "
         f"missing={sorted(expected - changed)}"
@@ -85,9 +95,12 @@ def check_build_inputs() -> None:
                 f"PR76 browser source drift: {path}"
             )
     for path in wallet_changes:
-        assert blob("HEAD", path) == blob(EXPECTED_WALLET_PROFILE_COMMIT, path), (
-            f"WTLOS wallet profile source drift: {path}"
-        )
+        if path not in DISPATCH_GUARD_SHA256:
+            assert blob("HEAD", path) == blob(EXPECTED_WALLET_PROFILE_COMMIT, path), (
+                f"WTLOS wallet profile source drift: {path}"
+            )
+    for path, digest in DISPATCH_GUARD_SHA256.items():
+        assert sha256(ROOT / path) == digest, f"WTLOS dispatch guard drift: {path}"
 
     path_attribute = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\]\s*$', re.MULTILINE)
     for crate in (PROOF_CRATE, CRATE):

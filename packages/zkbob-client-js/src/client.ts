@@ -1745,6 +1745,13 @@ export class ZkBobClient extends ZkBobProvider {
 
   // Universal proving routine
   private async proveTx(pub: any, sec: any, forcedMode: ProverMode | undefined = undefined): Promise<any> {
+    // A release profile identifies the PR7 relation, but this client still
+    // constructs legacy witness objects. Do not hand those objects to any
+    // local, native-hardware, or delegated prover until the PR7 path is wired.
+    if (this.pool().wtlosReleaseProfile) {
+      throw new InternalError('WTLOS PR7 proving is not wired in this wallet');
+    }
+
     const proverMode = forcedMode ?? this.getProverMode();
     const prover = this.prover();
     if ((proverMode == ProverMode.Delegated || proverMode == ProverMode.DelegatedWithFallback) && prover) {

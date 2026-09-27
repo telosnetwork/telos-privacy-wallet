@@ -8,8 +8,8 @@ export interface SnarkConfigParams {
   transferVkUrl: string;
   transferParamsSha256?: string;
   transferVkSha256?: string;
-  // Exact source tree reported by a dedicated proving module. Supplying this
-  // requires that module to expose a matching wtlosPR7SourceTree capability.
+  // A PR7 source identity is necessary but does not enable proving. The
+  // current wallet still rejects PR7 dispatch until its witness/prover API is wired.
   wtlosCircuitSourceTree?: string;
 }
 

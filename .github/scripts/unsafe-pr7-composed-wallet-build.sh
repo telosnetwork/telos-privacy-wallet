@@ -90,6 +90,7 @@ PY
 # The repository's preinstall runs a floating-toolchain WASM generator. These
 # source-bound packages already exist, so suppress lifecycle scripts here.
 yarn install --frozen-lockfile --ignore-scripts --non-interactive --network-concurrency 1
+node --test packages/zkbob-client-js/test/wtlos-pr7-prover-dispatch.test.cjs
 yarn workspace zkbob-client-js run check
 yarn workspace zkbob-client-js run build
 CI=false GENERATE_SOURCEMAP=false REACT_APP_CONFIG=dev \

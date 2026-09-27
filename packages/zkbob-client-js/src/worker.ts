@@ -71,6 +71,12 @@ const obj = {
       throw new InternalError(`Cannot find snark parameters set \'${paramsName}\'`);
     }
 
+    // A matching source-tree string alone does not make Proof.tx a PR7 prover.
+    // Keep direct worker callers out of the legacy witness/proof path too.
+    if (params.wtlosCircuitSourceTree()) {
+      throw new InternalError('WTLOS PR7 proving is not wired in this wallet worker');
+    }
+
     console.debug('Web worker: proveTx');
     let snarkParams = await params.getParams(wasm);
     return wasm.Proof.tx(snarkParams, pub, sec);
