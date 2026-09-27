@@ -24,7 +24,6 @@ num-traits = "0.2.8"
 itertools = "0.9.0"
 hex = "0.4.0"
 cfg-if = "0.1.10"
-bellman_ce = { package = "fawkes-crypto-zkbob-bellman_ce", version="0.4.0", git = "https://github.com/zkBob/phase2-bn254", branch = "master", default-features = false } # active features depend on build type
 
 # needed for native only but don't break wasm if present
 num_cpus = "1"
@@ -37,8 +36,12 @@ web-sys = { version = "0.3.35", features = ["console"], optional = true }
 console_error_panic_hook = { version = "0.1.6", optional = true }
 
 [features]
-default = ["bellman_ce/multicore", "rust-crypto"]
+default = ["rust-crypto"]
 wasm = ["wasm-bindgen", "js-sys", "web-sys", "console_error_panic_hook", "bellman_ce/wasm"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bellman_ce = { package = "fawkes-crypto-zkbob-bellman_ce", version="0.4.0", git = "https://github.com/zkBob/phase2-bn254", branch = "master", default-features = false, features = ["multicore"] }
 rust-crypto = { version = "0.2", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bellman_ce = { package = "fawkes-crypto-zkbob-bellman_ce", version="0.4.0", git = "https://github.com/zkBob/phase2-bn254", branch = "master", default-features = false, features = ["wasm"] }
