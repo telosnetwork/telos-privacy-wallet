@@ -72,5 +72,8 @@ jobs:
             ${{ runner.temp }}/composed-wallet-evidence
             packages/libzkbob-rs-wasm/web
             packages/libzkbob-rs-wasm/web-mt
+            packages/zkbob-client-js/lib
+            apps/zktelos-wallet/build
           if-no-files-found: warn
           retention-days: 7
+          include-hidden-files: true
