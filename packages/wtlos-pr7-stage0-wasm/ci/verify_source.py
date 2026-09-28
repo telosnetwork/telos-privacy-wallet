@@ -40,6 +40,12 @@ DISPATCH_GUARD_SHA256 = {
     "packages/zkbob-client-js/test/wtlos-pr7-prover-dispatch.test.cjs":
         "3f9b1eb2ae7e490b8b6563fdfc02dab53d4f80b2f53e03c8ff1fc4d926a5b3c0",
 }
+WTLOS_ARTIFACT_INSPECTION_SHA256 = {
+    "packages/zkbob-client-js/src/params.ts":
+        "2b45f406a9fa6cb80842057648b23e83955146220698dc48a22047e9eb275484",
+    "packages/zkbob-client-js/test/wtlos-browser-artifact-inspection.test.cjs":
+        "34db6567c813eec386cf93a79e52a94d584c1490ffad25c6d32d8aa0569b5666",
+}
 WALLET_BRIDGE_SHA256 = {
     "packages/wtlos-pr7-proof/Cargo.toml":
         "173e2b5560bcbaaf0876b01dd0e5163f2e8cf8bf92cb062e6bb4cee4f45de3d1",
@@ -96,7 +102,8 @@ def check_build_inputs() -> None:
     }
     changed = changes("HEAD")
     expected = (browser_changes | wallet_changes | build_evidence_paths |
-                set(DISPATCH_GUARD_SHA256) | set(WALLET_BRIDGE_SHA256))
+                set(DISPATCH_GUARD_SHA256) | set(WALLET_BRIDGE_SHA256) |
+                set(WTLOS_ARTIFACT_INSPECTION_SHA256))
     assert changed == expected, (
         f"composed source path set drift: extra={sorted(changed - expected)}, "
         f"missing={sorted(expected - changed)}"
@@ -110,12 +117,14 @@ def check_build_inputs() -> None:
                 f"PR76 browser source drift: {path}"
             )
     for path in wallet_changes:
-        if path not in DISPATCH_GUARD_SHA256:
+        if path not in DISPATCH_GUARD_SHA256 and path not in WTLOS_ARTIFACT_INSPECTION_SHA256:
             assert blob("HEAD", path) == blob(EXPECTED_WALLET_PROFILE_COMMIT, path), (
                 f"WTLOS wallet profile source drift: {path}"
             )
     for path, digest in DISPATCH_GUARD_SHA256.items():
         assert sha256(ROOT / path) == digest, f"WTLOS dispatch guard drift: {path}"
+    for path, digest in WTLOS_ARTIFACT_INSPECTION_SHA256.items():
+        assert sha256(ROOT / path) == digest, f"WTLOS artifact inspection drift: {path}"
     for path, digest in WALLET_BRIDGE_SHA256.items():
         assert sha256(ROOT / path) == digest, f"WTLOS offline wallet bridge drift: {path}"
 

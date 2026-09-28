@@ -4,6 +4,16 @@ import { SnarkConfigParams } from "./config";
 import sha256 from 'fast-sha256';
 
 const MAX_VK_LOAD_ATTEMPTS = 3;
+// Inspection resource bound only. The current test-only PR8 VKs are < 4 KiB;
+// this leaves room for final VK serialization without treating size as validity.
+const MAX_WTLOS_INSPECTION_VK_BYTES = 1024 * 1024;
+// Draft circuits PR8 identity. These pins label an offline byte inspection;
+// they do not authenticate a browser module, key ceremony, or proof capability.
+export const WTLOS_CIRCUIT_SOURCE_TREE = 'cde8d9501f3ade151299ac7c204fb22ffee07589';
+export const WTLOS_TRANSFER_CIRCUIT_IDENTITY =
+    '5b1bb02a9ff12b4beb86c2f8695d8c6e622ab73a821729134c280d90f0a4ea0a';
+export const WTLOS_TREE_CIRCUIT_IDENTITY =
+    '45c77c1a59970ff81f272041474627398ba93a47570b6dd9f440a9045b322610';
 
 export enum LoadingStatus {
     NotStarted = 0,
@@ -45,6 +55,11 @@ export class SnarkParams {
     }
 
     public async getParams(wasm: any, expectedHash?: string): Promise<any> {
+        // Reject source-tagged WTLOS inputs before legacy WASM parsing. An
+        // untagged configuration cannot be classified by this generic class.
+        if (this.expectedWTLOSCircuitSourceTree) {
+            throw new InternalError('Source-tagged WTLOS parameters cannot use the legacy parser');
+        }
         const effectiveHash = this.resolveExpectedHash(expectedHash);
         if (!this.isParamsReady()) {
             this.loadParams(wasm, effectiveHash);
@@ -52,6 +67,70 @@ export class SnarkParams {
         }
 
         return this.params;
+    }
+
+    // Inspect only caller-supplied bytes against configured hashes and the
+    // PR8 source pin. No proving parameter parser or module is accepted or
+    // invoked. VK JSON is parsed only for shape inspection and then discarded.
+    // This receipt is not evidence of ceremony or browser-prover readiness.
+    public async inspectWTLOSArtifactsFromBytes(
+        paramsBytes: Uint8Array,
+        vkBytes: Uint8Array
+    ): Promise<Readonly<{
+        status: 'INSPECTION_ONLY_NO_PROVER';
+        authoritative: false;
+        proverAvailable: false;
+        sourceTree: string;
+        transferCircuitIdentitySha256: string;
+        treeCircuitIdentitySha256: string;
+        parameterSha256: string;
+        verificationKeySha256: string;
+    }>> {
+        if (arguments.length !== 2) {
+            throw new InternalError('WTLOS artifact inspection accepts exactly two byte arrays');
+        }
+        const source = this.expectedWTLOSCircuitSourceTree;
+        const paramsHash = this.expectedParamsHash;
+        const vkHash = this.expectedVkHash;
+        if (!source || !paramsHash || !vkHash) {
+            throw new InternalError('WTLOS source, params, and VK hashes are required');
+        }
+        if (source !== WTLOS_CIRCUIT_SOURCE_TREE) {
+            throw new InternalError('WTLOS circuit source is not the reviewed PR8 tree');
+        }
+
+        if (!(paramsBytes instanceof Uint8Array) || !(vkBytes instanceof Uint8Array)) {
+            throw new InternalError('WTLOS inspection requires parameter and VK byte arrays');
+        }
+        if (vkBytes.byteLength > MAX_WTLOS_INSPECTION_VK_BYTES) {
+            throw new InternalError('WTLOS verification key exceeds inspection resource bound');
+        }
+        if (
+            this.sha256Hex(paramsBytes) !== paramsHash ||
+            this.sha256Hex(vkBytes) !== vkHash) {
+            throw new InternalError('WTLOS parameter or VK byte hash mismatch');
+        }
+        let verificationKey: any;
+        try {
+            verificationKey = JSON.parse(new TextDecoder('utf-8', {fatal: true}).decode(vkBytes));
+        } catch {
+            throw new InternalError('Invalid WTLOS verification key JSON');
+        }
+        if (!verificationKey || typeof verificationKey !== 'object' ||
+            !['alpha', 'beta', 'gamma', 'delta', 'ic']
+                .every(field => Array.isArray(verificationKey[field]))) {
+            throw new InternalError('Invalid WTLOS verification key structure');
+        }
+        return Object.freeze({
+            status: 'INSPECTION_ONLY_NO_PROVER' as const,
+            authoritative: false as const,
+            proverAvailable: false as const,
+            sourceTree: source,
+            transferCircuitIdentitySha256: WTLOS_TRANSFER_CIRCUIT_IDENTITY,
+            treeCircuitIdentitySha256: WTLOS_TREE_CIRCUIT_IDENTITY,
+            parameterSha256: paramsHash,
+            verificationKeySha256: vkHash,
+        });
     }
 
     // VKs are much smaller than params so we can refetch it in case any errors

@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - codex/pr7-witness-preflight-20260927
     paths:
       - .github/workflows/unsafe-pr7-composed-wallet-build.yml
       - .github/scripts/unsafe-pr7-composed-wallet-build.sh
@@ -20,8 +21,59 @@ permissions:
   contents: read
 
 jobs:
+  artifact-inspection-only:
+    name: PR8 artifact inspection and prover-dispatch HOLD
+    if: github.event_name == 'pull_request' && github.base_ref == 'codex/pr7-witness-preflight-20260927'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact PR head without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify exact head and source pins
+        env:
+          EXPECTED_CHECKOUT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${EXPECTED_CHECKOUT_SHA}"
+          # The verifier exempts its own file from its source comparison.
+          # Pin those bytes in the workflow before executing them.
+          actual="$(sha256sum packages/wtlos-pr7-stage0-wasm/ci/verify_source.py | cut -d ' ' -f1)"
+          test "${actual}" = '66d4ecc199553de6609b6afcbe68ce7130407813a15fc8ea49f532bb209b3d76'
+          python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
+
+      - name: Use pinned Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+
+      - name: Load exact TypeScript test dependency without lifecycle scripts
+        run: |
+          test "$(node --version)" = 'v22.22.0'
+          archive="${RUNNER_TEMP}/typescript-5.9.3.tgz"
+          module_dir="${RUNNER_TEMP}/wtlos-pr80-test/node_modules/typescript"
+          curl --fail --silent --show-error --location --max-time 120 \
+            --proto '=https' --proto-redir '=https' \
+            --output "${archive}" \
+            'https://registry.yarnpkg.com/typescript/-/typescript-5.9.3.tgz'
+          actual="$(openssl dgst -sha512 -binary "${archive}" | openssl base64 -A)"
+          test "${actual}" = 'jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=='
+          mkdir -p "${module_dir}"
+          tar -xzf "${archive}" -C "${module_dir}" --strip-components=1
+          echo "NODE_PATH=${RUNNER_TEMP}/wtlos-pr80-test/node_modules" >> "${GITHUB_ENV}"
+
+      - name: Run synthetic inspect-only and prover-dispatch tests
+        run: |
+          node --test \
+            packages/zkbob-client-js/test/wtlos-browser-artifact-inspection.test.cjs \
+            packages/zkbob-client-js/test/wtlos-pr7-prover-dispatch.test.cjs
+
   composed-wallet-build:
     name: Build-only WASM and wallet; release HOLD
+    if: github.event_name != 'pull_request' || github.base_ref == 'main' || github.base_ref == 'codex/pr7-witness-preflight-20260927'
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
@@ -39,7 +91,13 @@ jobs:
           echo "WASM_BINDGEN_BIN=${RUNNER_TEMP}/composed-wallet-tools/bin/wasm-bindgen" >> "${GITHUB_ENV}"
 
       - name: Verify exact composed source and fail-closed release pins
-        run: python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
+        env:
+          EXPECTED_CHECKOUT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "${EXPECTED_CHECKOUT_SHA}"
+          actual="$(sha256sum packages/wtlos-pr7-stage0-wasm/ci/verify_source.py | cut -d ' ' -f1)"
+          test "${actual}" = '66d4ecc199553de6609b6afcbe68ce7130407813a15fc8ea49f532bb209b3d76'
+          python3 -I -B packages/wtlos-pr7-stage0-wasm/ci/verify_source.py
 
       - name: Install exact Rust toolchains and WASM prerequisites
         run: |
