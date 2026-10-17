@@ -14,7 +14,8 @@ for (const name of ['fresh-wtlos-v3-memo', 'fresh-wtlos-v3-calldata']) {
   const source = readFileSync(new URL(`../src/networks/evm/${name}.ts`, import.meta.url), 'utf8');
   writeFileSync(join(testDir, `${name}.js`), stripTypeScriptTypes(source));
 }
-const { freshWTLOSV3VerifierInputs, matchFreshWTLOSV3Event, parseFreshWTLOSV3Calldata } =
+const { assembleFreshWTLOSV3Calldata, freshWTLOSV3VerifierInputs,
+  matchFreshWTLOSV3Event, parseFreshWTLOSV3Calldata } =
   await import(pathToFileURL(join(testDir, 'fresh-wtlos-v3-calldata.js')).href);
 
 const proxy = '0x' + '11'.repeat(20);
@@ -71,6 +72,16 @@ const cases = [
 ];
 for (const [txType, tokenAmount] of cases) {
   const bytes = makeCalldata(txType, tokenAmount);
+  const memoLength = bytes.readUInt16BE(642);
+  const assembly = {
+    txType, nullifier: 1n, outCommit: 2n, transferIndex: 0n,
+    energyAmount: 0n, transferTokenDelta: tokenAmount,
+    transferProof: hex(bytes.subarray(96, 352)), nextRoot: 3n,
+    treeProof: hex(bytes.subarray(384, 640)),
+    rawMemo: hex(bytes.subarray(644, 644 + memoLength)),
+    ...(txType === '0000' ? { deadline: 1000n, compactSignature: '33'.repeat(64) } : {}),
+  };
+  assert.equal(assembleFreshWTLOSV3Calldata(context, source, assembly), `0x${hex(bytes)}`);
   const parsed = parseFreshWTLOSV3Calldata(context, source, `0x${hex(bytes)}`);
   assert.equal(parsed.chainId, 40);
   assert.equal(parsed.poolId, 7n);
@@ -118,6 +129,32 @@ for (const [txType, tokenAmount] of cases) {
   }
   if (txType === '0002') assert.equal(parsed.withdrawalRecipient, '0x' + '22'.repeat(20));
 }
+
+const assembledDeposit = makeCalldata('0000', 10n);
+const assembledMemoLength = assembledDeposit.readUInt16BE(642);
+const depositFields = {
+  txType: '0000', nullifier: 1n, outCommit: 2n, transferIndex: 0n,
+  energyAmount: 0n, transferTokenDelta: 10n,
+  transferProof: hex(assembledDeposit.subarray(96, 352)), nextRoot: 3n,
+  treeProof: hex(assembledDeposit.subarray(384, 640)),
+  rawMemo: hex(assembledDeposit.subarray(644, 644 + assembledMemoLength)),
+  deadline: 1000n, compactSignature: '33'.repeat(64),
+};
+const rejectAssembly = (change, ctx = context, src = source) =>
+  assert.throws(() => assembleFreshWTLOSV3Calldata(ctx, src, { ...depositFields, ...change }));
+rejectAssembly({ nullifier: field });
+rejectAssembly({ nextRoot: 0n });
+rejectAssembly({ transferIndex: 1n });
+rejectAssembly({ transferIndex: ((1n << 32n) - 1n) * 128n });
+rejectAssembly({ energyAmount: 1n << 111n });
+rejectAssembly({ transferTokenDelta: -(1n << 63n) - 1n });
+rejectAssembly({ transferProof: '00'.repeat(255) });
+rejectAssembly({ treeProof: '00'.repeat(257) });
+rejectAssembly({ deadline: 0n });
+rejectAssembly({ compactSignature: '33'.repeat(63) });
+rejectAssembly({ rawMemo: '00' });
+rejectAssembly({}, context, { ...source, chainId: 41 });
+rejectAssembly({ txType: '0001' });
 
 const deposit = makeCalldata('0000', 10n);
 const reject = (bytes, ctx = context, src = source) =>

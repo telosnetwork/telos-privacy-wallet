@@ -59,6 +59,22 @@ export interface FreshWTLOSV3VerifierInputs {
   tree: [bigint, bigint, bigint];
 }
 
+/** Opaque proof bytes must come from a separately qualified guarded prover. */
+export interface FreshWTLOSV3CalldataAssembly {
+  txType: FreshWTLOSV3TxType;
+  nullifier: bigint;
+  outCommit: bigint;
+  transferIndex: bigint;
+  energyAmount: bigint;
+  transferTokenDelta: bigint;
+  transferProof: string; // eight 32-byte words, not verified here
+  nextRoot: bigint;
+  treeProof: string; // eight 32-byte words, not verified here
+  rawMemo: string; // exact final memo signed by the guarded owner
+  deadline?: bigint; // type-0 deposit only
+  compactSignature?: string; // type-0 EIP-2098 r||vs, not verified here
+}
+
 function hexBytes(value: string, label: string): Uint8Array {
   if (typeof value !== 'string') throw new Error(`${label} must be hex`);
   const raw = value.startsWith('0x') ? value.slice(2) : value;
@@ -82,6 +98,94 @@ function unsigned(bytes: Uint8Array): bigint {
   let value = 0n;
   for (const byte of bytes) value = (value << 8n) | BigInt(byte);
   return value;
+}
+
+function encodeUnsigned(value: bigint, size: number, label: string): Uint8Array {
+  if (typeof value !== 'bigint' || value < 0n || value >= (1n << BigInt(size * 8))) {
+    throw new Error(`${label} is out of range`);
+  }
+  const result = new Uint8Array(size);
+  let rest = value;
+  for (let i = size - 1; i >= 0; i--) {
+    result[i] = Number(rest & 255n);
+    rest >>= 8n;
+  }
+  return result;
+}
+
+function encodeSigned(value: bigint, size: number, label: string): Uint8Array {
+  const bits = BigInt(size * 8);
+  if (typeof value !== 'bigint' || value < -(1n << (bits - 1n)) ||
+      value >= (1n << (bits - 1n))) {
+    throw new Error(`${label} is out of range`);
+  }
+  return encodeUnsigned(value < 0n ? (1n << bits) + value : value, size, label);
+}
+
+/**
+ * Assemble the selected r12 custom calldata layout from final public fields,
+ * two opaque proof byte arrays and the already-finalized raw memo. Parsing the
+ * result checks the route, memo domain, economics and deposit tail. This does
+ * not create or verify a witness, either proof, or the depositor signature.
+ */
+export function assembleFreshWTLOSV3Calldata(
+  context: FreshWTLOSV3MemoContext,
+  source: FreshWTLOSV3CalldataSource,
+  fields: FreshWTLOSV3CalldataAssembly,
+): string {
+  if (fields.txType !== '0000' && fields.txType !== '0001' && fields.txType !== '0002') {
+    throw new Error('fresh WTLOS transaction type is unsupported');
+  }
+  if (typeof fields.nullifier !== 'bigint' || fields.nullifier < 0n ||
+      fields.nullifier >= FIELD_MODULUS || typeof fields.outCommit !== 'bigint' ||
+      fields.outCommit < 0n || fields.outCommit >= FIELD_MODULUS ||
+      typeof fields.nextRoot !== 'bigint' || fields.nextRoot <= 0n ||
+      fields.nextRoot >= FIELD_MODULUS) {
+    throw new Error('fresh WTLOS public field is not canonical');
+  }
+  if (typeof fields.transferIndex !== 'bigint' || fields.transferIndex < 0n ||
+      fields.transferIndex > MAX_SUCCESSFUL_PRE_TRANSACTION_INDEX ||
+      fields.transferIndex % 128n !== 0n) {
+    throw new Error('fresh WTLOS transfer index is not a reachable root index');
+  }
+  const transferProof = hexBytes(fields.transferProof, 'transfer proof');
+  const treeProof = hexBytes(fields.treeProof, 'tree proof');
+  if (transferProof.length !== 256 || treeProof.length !== 256) {
+    throw new Error('fresh WTLOS proofs must each have eight 32-byte words');
+  }
+  const rawMemo = hexBytes(fields.rawMemo, 'raw memo');
+  if (rawMemo.length > 65535) throw new Error('fresh WTLOS memo is too long');
+  let tail = new Uint8Array(0);
+  if (fields.txType === '0000') {
+    if (fields.deadline === undefined || fields.deadline === 0n ||
+        fields.compactSignature === undefined) {
+      throw new Error('fresh WTLOS deposit requires deadline and compact signature');
+    }
+    const signature = hexBytes(fields.compactSignature, 'compact signature');
+    if (signature.length !== 64) throw new Error('fresh WTLOS compact signature must be 64 bytes');
+    tail = new Uint8Array(72);
+    tail.set(encodeUnsigned(fields.deadline, 8, 'deposit deadline'), 0);
+    tail.set(signature, 8);
+  } else if (fields.deadline !== undefined || fields.compactSignature !== undefined) {
+    throw new Error('fresh WTLOS non-deposit transaction cannot have a signature tail');
+  }
+  const parts = [hexBytes(SELECTOR, 'selector'),
+    encodeUnsigned(fields.nullifier, 32, 'nullifier'),
+    encodeUnsigned(fields.outCommit, 32, 'output commitment'),
+    encodeUnsigned(fields.transferIndex, 6, 'transfer index'),
+    encodeSigned(fields.energyAmount, 14, 'energy amount'),
+    encodeSigned(fields.transferTokenDelta, 8, 'transfer token delta'),
+    transferProof,
+    encodeUnsigned(fields.nextRoot, 32, 'next root'),
+    treeProof,
+    hexBytes(fields.txType, 'transaction type'),
+    encodeUnsigned(BigInt(rawMemo.length), 2, 'memo length'), rawMemo, tail];
+  const bytes = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) { bytes.set(part, offset); offset += part.length; }
+  const calldata = `0x${hex(bytes)}`;
+  parseFreshWTLOSV3Calldata(context, source, calldata);
+  return calldata;
 }
 
 function signed(bytes: Uint8Array): bigint {
