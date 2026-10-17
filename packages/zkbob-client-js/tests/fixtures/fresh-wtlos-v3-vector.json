@@ -1,0 +1,57 @@
+{
+  "schema": "telos-wtlos-deposit-intent-v3-synthetic-vector-1",
+  "warning": "Synthetic source-level EIP-712 vector. No real wallet, proof, signature, token, or network is involved.",
+  "domain": {
+    "name": "Telos Privacy WTLOS Deposit",
+    "version": "3",
+    "chainId": 40,
+    "verifyingContract": "0x1111111111111111111111111111111111111111"
+  },
+  "types": {
+    "EIP712Domain": [
+      { "name": "name", "type": "string" },
+      { "name": "version", "type": "string" },
+      { "name": "chainId", "type": "uint256" },
+      { "name": "verifyingContract", "type": "address" }
+    ],
+    "DepositAuthorization": [
+      { "name": "root", "type": "uint256" },
+      { "name": "nullifier", "type": "uint256" },
+      { "name": "outCommit", "type": "uint256" },
+      { "name": "packedDeltaAndPoolId", "type": "uint256" },
+      { "name": "memoDataHash", "type": "bytes32" },
+      { "name": "deadline", "type": "uint64" },
+      { "name": "operator", "type": "address" }
+    ]
+  },
+  "primaryType": "DepositAuthorization",
+  "message": {
+    "root": "11469701942666298368112882412133877458305516134926649826543144744382391691533",
+    "nullifier": "4660",
+    "outCommit": "22136",
+    "packedDeltaAndPoolId": "0x00009c430000000000000000000000000000000000000000000000012a05f200",
+    "memoDataHash": "0xdcde00bf8391f051b9c0a1172dc758efb3410532e66eede25f041c7ec1775a02",
+    "deadline": "2000000000",
+    "operator": "0x2222222222222222222222222222222222222222"
+  },
+  "sourceValues": {
+    "root": "11469701942666298368112882412133877458305516134926649826543144744382391691533",
+    "nullifier": "4660",
+    "outCommit": "22136",
+    "poolId": "40003",
+    "tokenDelta": "5000000000",
+    "energyDelta": "0",
+    "historicalIndex": "0",
+    "fee": "50000000",
+    "deadline": "2000000000",
+    "operator": "0x2222222222222222222222222222222222222222",
+    "memoDataHex": "0x0000000002faf08000000000545044311111111111111111111111111111111111111111"
+  },
+  "expected": {
+    "memoDataHash": "0xdcde00bf8391f051b9c0a1172dc758efb3410532e66eede25f041c7ec1775a02",
+    "packedDeltaAndPoolId": "0x00009c430000000000000000000000000000000000000000000000012a05f200",
+    "domainSeparator": "0x406c6af83c06299ad57863b5ad451ccea722cd8b5b4c7e72d1e9ef3f4ca22783",
+    "statementHash": "0xe92774fed1915b286671de4dafe01305c70f5d43720211223fb30a0cf27e7b89",
+    "digest": "0x5fe2419bb4cbdd734d4e02d09baa2879f008292330f12a9c2c56ad430295bdf6"
+  }
+}
