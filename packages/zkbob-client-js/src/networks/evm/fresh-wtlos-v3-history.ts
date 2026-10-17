@@ -62,6 +62,7 @@ export class FreshWTLOSV3HistoryReplay {
   private lastBlockNumber: bigint | undefined;
   private lastBlockHash: string | undefined;
   private lastTransactionIndex: bigint | undefined;
+  private advancing = false;
 
   constructor(context: FreshWTLOSV3MemoContext) {
     this.context = trustedContext(context);
@@ -88,34 +89,47 @@ export class FreshWTLOSV3HistoryReplay {
     receipt: FreshWTLOSV3ReceiptRecord,
     keccak256Hex: (bytesHex: string) => string,
   ): FreshWTLOSV3BoundReceipt {
-    const blockHash = normalizedHash(transaction.blockHash);
-    if (this.lastBlockNumber !== undefined &&
-        (transaction.blockNumber < this.lastBlockNumber ||
-         (transaction.blockNumber === this.lastBlockNumber &&
-          transaction.transactionIndex <= this.lastTransactionIndex!))) {
-      throw new Error('fresh WTLOS history transaction order is not increasing');
+    if (this.advancing) throw new Error('fresh WTLOS history advance is reentrant');
+    this.advancing = true;
+    try {
+      // The hash callback may hold references to its caller's records. Pin all
+      // fields that the binder will inspect before invoking that callback.
+      const tx = { ...transaction };
+      const rcpt = { ...receipt, logs: receipt.logs.map(log =>
+        ({ ...log, topics: [...log.topics] })) };
+      const blockNumber = tx.blockNumber;
+      const transactionIndex = tx.transactionIndex;
+      const blockHash = normalizedHash(tx.blockHash);
+      if (this.lastBlockNumber !== undefined &&
+          (blockNumber < this.lastBlockNumber ||
+           (blockNumber === this.lastBlockNumber &&
+            transactionIndex <= this.lastTransactionIndex!))) {
+        throw new Error('fresh WTLOS history transaction order is not increasing');
+      }
+      if (blockNumber === this.lastBlockNumber && blockHash !== this.lastBlockHash) {
+        throw new Error('fresh WTLOS same-block transactions disagree on block hash');
+      }
+      const parsed = parseFreshWTLOSV3Calldata(this.context,
+        { chainId, to: tx.to }, tx.input);
+      const historicalRoot = this.roots.get(parsed.transferIndex);
+      const currentRoot = this.roots.get(this.currentIndex);
+      if (historicalRoot === undefined || currentRoot === undefined) {
+        throw new Error('fresh WTLOS history has a missing prior root');
+      }
+      const bound = bindFreshWTLOSV3Receipt(this.context, chainId, tx, rcpt,
+        { historical: { index: parsed.transferIndex, root: historicalRoot },
+          current: { index: this.currentIndex, root: currentRoot } },
+        this.allMessagesHash, keccak256Hex);
+      // Commit only after every receipt, memo, root and rolling-hash check passes.
+      this.roots.set(bound.eventIndex, bound.parsed.nextRoot);
+      this.currentIndex = bound.eventIndex;
+      this.allMessagesHash = bound.allMessagesHash;
+      this.lastBlockNumber = blockNumber;
+      this.lastBlockHash = blockHash;
+      this.lastTransactionIndex = transactionIndex;
+      return bound;
+    } finally {
+      this.advancing = false;
     }
-    if (transaction.blockNumber === this.lastBlockNumber && blockHash !== this.lastBlockHash) {
-      throw new Error('fresh WTLOS same-block transactions disagree on block hash');
-    }
-    const parsed = parseFreshWTLOSV3Calldata(this.context,
-      { chainId, to: transaction.to }, transaction.input);
-    const historicalRoot = this.roots.get(parsed.transferIndex);
-    const currentRoot = this.roots.get(this.currentIndex);
-    if (historicalRoot === undefined || currentRoot === undefined) {
-      throw new Error('fresh WTLOS history has a missing prior root');
-    }
-    const bound = bindFreshWTLOSV3Receipt(this.context, chainId, transaction, receipt,
-      { historical: { index: parsed.transferIndex, root: historicalRoot },
-        current: { index: this.currentIndex, root: currentRoot } },
-      this.allMessagesHash, keccak256Hex);
-    // Commit only after every receipt, memo, root and rolling-hash check passes.
-    this.roots.set(bound.eventIndex, bound.parsed.nextRoot);
-    this.currentIndex = bound.eventIndex;
-    this.allMessagesHash = bound.allMessagesHash;
-    this.lastBlockNumber = transaction.blockNumber;
-    this.lastBlockHash = blockHash;
-    this.lastTransactionIndex = transaction.transactionIndex;
-    return bound;
   }
 }

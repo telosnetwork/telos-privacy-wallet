@@ -11,12 +11,17 @@ checkpoint comparison can detect a truncated or divergent sequence **if** the
 expected checkpoint was obtained independently from trusted chain state.
 Transactions in the same block must also agree on their block hash and have
 strictly increasing transaction indices.
+`advance()` rejects callback reentrancy and snapshots the supplied records
+before invoking the Keccak callback. A rejected validation step leaves the
+replay checkpoint unchanged. The callback itself must still be a trusted,
+correct Keccak-256 implementation without unrelated side effects.
 
 The synthetic test covers a deposit followed by a private transfer in the
 same block. The second transfer uses the initial historical root while its
 tree proof uses the first transaction's current root. A corrupted second
 receipt leaves the replay state unchanged. Missing, repeated, and out-of-order
-transactions are rejected. The Keccak fixture answers were independently
+transactions are rejected. Reentrant and record-mutating hash callbacks are
+covered by separate controls. The Keccak fixture answers were independently
 calculated with `cast keccak`; the test does not run a real wallet hash provider.
 
 The replay cannot establish that RPC records are genuine, canonical, final,

@@ -123,6 +123,28 @@ assert.throws(() => replay.advance(40, second.transaction, second.receipt, kecca
 
 const missingFirst = new FreshWTLOSV3HistoryReplay(context);
 assert.throws(() => missingFirst.advance(40, second.transaction, second.receipt, keccak));
+const reentrant = new FreshWTLOSV3HistoryReplay(context);
+const reentrantHash = value => {
+  reentrant.advance(40, first.transaction, first.receipt, keccak);
+  return keccak(value);
+};
+assert.throws(() => reentrant.advance(40, first.transaction, first.receipt, reentrantHash));
+assert.deepEqual(reentrant.checkpoint(),
+  { currentIndex: 0n, currentRoot: initialRoot, allMessagesHash: zero });
+reentrant.advance(40, first.transaction, first.receipt, keccak);
+
+const mutationReplay = new FreshWTLOSV3HistoryReplay(context);
+const mutableFirst = structuredClone(first);
+const mutatingHash = value => {
+  mutableFirst.transaction.blockNumber = 99n;
+  mutableFirst.transaction.input = '0x';
+  mutableFirst.receipt.status = false;
+  return keccak(value);
+};
+mutationReplay.advance(40, mutableFirst.transaction, mutableFirst.receipt, mutatingHash);
+mutationReplay.advance(40, second.transaction, second.receipt, keccak);
+assert.equal(mutationReplay.checkpoint().currentIndex, 256n);
+
 const wrongBlockOrder = structuredClone(second);
 wrongBlockOrder.transaction.blockNumber = 9n;
 wrongBlockOrder.receipt.blockNumber = 9n;
