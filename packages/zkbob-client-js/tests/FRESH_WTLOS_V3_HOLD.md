@@ -24,3 +24,13 @@ still select the fresh pool, build the statement from final proof inputs,
 verify the recovered signer, pass the signed deadline/operator through the
 queue and relayer, and use qualified guarded proving artifacts. The release
 remains HOLD.
+
+The separate `fresh-wtlos-v3-deposit.ts` source bridge preflights the type-0
+calldata public inputs against that signed transfer statement and the supplied
+tree statement before requesting a signature. It copies the route, roots,
+proof bytes and transaction fields before any asynchronous wallet callback,
+then assembles the final call from the same snapshot and checks its public
+inputs again. The two proof byte arrays remain opaque; a supplied tree public
+statement and roots are not authenticated by this helper. It is still not
+imported into the running wallet, and the isolated test uses a synthetic signer
+and known memo digest. No real proving, signing, relaying or broadcast ran.
