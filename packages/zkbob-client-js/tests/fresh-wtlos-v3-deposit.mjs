@@ -39,6 +39,8 @@ const rawMemo = `0x${Buffer.concat([
 // Independently calculated with Foundry cast keccak over this exact raw memo.
 const memoDigest = '0x3aab3841e1fd09792994c9dfbcfd7362da89bb8fed44a888091b330b44a68888';
 const field = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+const congruentDigest = `0x${(BigInt(memoDigest) + field).toString(16).padStart(64, '0')}`;
+assert.equal(BigInt(congruentDigest) % field, BigInt(memoDigest) % field);
 const tx = { public: {
   root: 101n, nullifier: 1n, out_commit: 2n,
   delta: (7n << 224n) + 10n, memo: BigInt(memoDigest) % field,
@@ -116,14 +118,14 @@ const mutated = await assembleSignedFreshWTLOSV3Deposit(mutableContext, mutableR
   keccak, backend, mutatingSign, () => 1000);
 assert.equal(mutated.calldata, result.calldata);
 
-// A hash provider changing its answer after signing cannot produce calldata.
+// A changed full digest must fail even when reduction modulo Fr is unchanged.
 let digestCalls = 0;
 await assert.rejects(assembleSignedFreshWTLOSV3Deposit(
   context, roots, tx, treePublic, proofs, depositor, 2000000000n, operator,
   value => {
     assert.equal(value.toLowerCase(), rawMemo);
     digestCalls++;
-    return digestCalls === 4 ? `0x${'11'.repeat(32)}` : memoDigest;
+    return digestCalls === 4 ? congruentDigest : memoDigest;
   }, backend, sign, () => 1000,
 ));
 assert.equal(digestCalls, 4);

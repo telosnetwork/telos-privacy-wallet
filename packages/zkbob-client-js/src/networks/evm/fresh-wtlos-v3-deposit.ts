@@ -78,6 +78,21 @@ export async function assembleSignedFreshWTLOSV3Deposit(
     deadline, operator, keccak256HexBytes,
   );
   const message = prepared.typedData.message;
+  const signedMemoDigest = message.memoDataHash.toLowerCase();
+  const stableKeccak = (rawHex: string): string => {
+    if (rawHex.toLowerCase() !== prepared.rawMemo) {
+      throw new Error('fresh WTLOS raw memo changed after preflight');
+    }
+    const digest = keccak256HexBytes(rawHex);
+    if (typeof digest !== 'string' || !/^(?:0x)?[0-9a-fA-F]{64}$/.test(digest)) {
+      throw new Error('fresh WTLOS memo digest is not 32-byte hex');
+    }
+    const normalized = `0x${(digest.startsWith('0x') ? digest.slice(2) : digest).toLowerCase()}`;
+    if (normalized !== signedMemoDigest) {
+      throw new Error('fresh WTLOS full memo digest changed after preflight');
+    }
+    return normalized;
+  };
   const base: FreshWTLOSV3CalldataAssembly = {
     ...fields, txType: '0000', nullifier: BigInt(message.nullifier),
     outCommit: BigInt(message.outCommit), rawMemo: prepared.rawMemo,
@@ -89,14 +104,14 @@ export async function assembleSignedFreshWTLOSV3Deposit(
     BigInt(message.packedDeltaAndPoolId), BigInt(message.memoDataHash) % FIELD_MODULUS,
   ];
   const previewInputs = freshWTLOSV3VerifierInputs(
-    route, source, preview, rootSnapshot, keccak256HexBytes,
+    route, source, preview, rootSnapshot, stableKeccak,
   );
   sameInputs(previewInputs.transfer, expectedTransfer, 'transfer');
   sameInputs(previewInputs.tree, treeStatement, 'tree');
 
   const signedIntent = await signFreshWTLOSV3Transaction(
     snapshot, route.poolProxy, route.poolId, expectedDepositor,
-    prepared.deadline, operator, keccak256HexBytes,
+    prepared.deadline, operator, stableKeccak,
     backend, signatureCallback, nowSeconds,
   );
   if (JSON.stringify(signedIntent.typedData) !== JSON.stringify(prepared.typedData) ||
@@ -107,7 +122,7 @@ export async function assembleSignedFreshWTLOSV3Deposit(
     ...base, compactSignature: signedIntent.compactSignature,
   });
   const verifierInputs = freshWTLOSV3VerifierInputs(
-    route, source, calldata, rootSnapshot, keccak256HexBytes,
+    route, source, calldata, rootSnapshot, stableKeccak,
   );
   sameInputs(verifierInputs.transfer, expectedTransfer, 'signed transfer');
   sameInputs(verifierInputs.tree, treeStatement, 'signed tree');
