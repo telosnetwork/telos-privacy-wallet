@@ -1,0 +1,58 @@
+name: Fresh WTLOS v3 source-only observers (HOLD)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/fresh-wtlos-v3-observers.yml'
+      - 'packages/zkbob-client-js/src/networks/evm/fresh-wtlos-v3-*.ts'
+      - 'packages/zkbob-client-js/src/signers/fresh-wtlos-v3-intent.ts'
+      - 'packages/zkbob-client-js/tests/fresh-wtlos-v3-*.mjs'
+      - 'packages/zkbob-client-js/tests/fixtures/fresh-wtlos-v3-vector.json'
+  push:
+    branches:
+      - codex/fresh-wtlos-v3-observer-hold-20261017
+    paths:
+      - '.github/workflows/fresh-wtlos-v3-observers.yml'
+      - 'packages/zkbob-client-js/src/networks/evm/fresh-wtlos-v3-*.ts'
+      - 'packages/zkbob-client-js/src/signers/fresh-wtlos-v3-intent.ts'
+      - 'packages/zkbob-client-js/tests/fresh-wtlos-v3-*.mjs'
+      - 'packages/zkbob-client-js/tests/fixtures/fresh-wtlos-v3-vector.json'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-source-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Use Node 22 for isolated TypeScript-stripping tests
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.22.0'
+      - name: Run synthetic observer tests only
+        run: |
+          node --test \
+            packages/zkbob-client-js/tests/fresh-wtlos-v3-memo.mjs \
+            packages/zkbob-client-js/tests/fresh-wtlos-v3-calldata.mjs \
+            packages/zkbob-client-js/tests/fresh-wtlos-v3-intent.mjs \
+            packages/zkbob-client-js/tests/fresh-wtlos-v3-deposit.mjs \
+            packages/zkbob-client-js/tests/fresh-wtlos-v3-receipt.mjs \
+            packages/zkbob-client-js/tests/fresh-wtlos-v3-history.mjs
+      - name: Install isolated TypeScript compiler without workspace scripts
+        run: |
+          npm install --prefix "$RUNNER_TEMP/fresh-wtlos-ts" \
+            --no-save --ignore-scripts --package-lock=false typescript@5.1.6
+      - name: Check the isolated source modules
+        run: |
+          node "$RUNNER_TEMP/fresh-wtlos-ts/node_modules/typescript/bin/tsc" \
+            --noEmit --strict --target ES2020 --module ESNext --moduleResolution Node \
+            packages/zkbob-client-js/src/networks/evm/fresh-wtlos-v3-memo.ts \
+            packages/zkbob-client-js/src/networks/evm/fresh-wtlos-v3-calldata.ts \
+            packages/zkbob-client-js/src/networks/evm/fresh-wtlos-v3-deposit.ts \
+            packages/zkbob-client-js/src/networks/evm/fresh-wtlos-v3-receipt.ts \
+            packages/zkbob-client-js/src/networks/evm/fresh-wtlos-v3-history.ts \
+            packages/zkbob-client-js/src/signers/fresh-wtlos-v3-intent.ts
