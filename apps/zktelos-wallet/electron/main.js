@@ -195,11 +195,6 @@ app.on('web-contents-created', (_event, contents) => {
   });
 });
 
-app.on('certificate-error', (event, _webContents, _url, _error, _certificate, callback) => {
-  event.preventDefault();
-  callback(true);
-});
-
 function setupRustIpcHandler() {
   // Channel name for the request
   const channel = 'prove-tx';
